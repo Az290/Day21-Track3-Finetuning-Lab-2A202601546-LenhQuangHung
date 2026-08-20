@@ -1,0 +1,27 @@
+# Lab 21 — full GPU path (NB2-NB6). Verified against PyPI on 2026-08-21.
+#
+# NOTE ON TORCH: install torch for YOUR CUDA build first, then this file.
+#   Colab/Kaggle ................ torch is preinstalled, skip it
+#   Linux + CUDA 12.x ........... pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   macOS (CPU/MPS, no training)  pip install torch
+torch>=2.6,<3
+
+# Core training stack.
+transformers>=5.15,<6
+trl>=1.10,<2          # v1.x API: max_length (not max_seq_length), processing_class
+                      # (not tokenizer), chunked_nll default since 1.7
+peft>=0.20,<1
+accelerate>=1.14,<2
+datasets>=5,<6
+
+# apply_chat_template needs jinja2, and transformers does NOT depend on it.
+jinja2>=3.1,<4
+tokenizers>=0.22,<1
+
+# 4-bit path — used ONLY by the NB4 `qlora` contrast run. Linux/CUDA only; on macOS
+# skip it and skip that one run (the other two contrasts still work).
+bitsandbytes>=0.50,<1; platform_system == "Linux"
+
+# Tooling
+jupytext>=1.17,<2
+pytest>=8.3,<10

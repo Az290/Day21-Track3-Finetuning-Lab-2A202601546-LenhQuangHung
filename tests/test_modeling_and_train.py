@@ -1,0 +1,161 @@
+"""Placement resolution, parameter accounting, and version-defensive config building."""
+import dataclasses
+import warnings
+
+import pytest
+from labkit import modeling, train
+from labkit.config import SPECS, TIERS, get_tier
+
+
+class _Lin:
+    def __init__(self, i, o):
+        self.in_features, self.out_features = i, o
+
+
+class _Model:
+    """Qwen3.5-4B-shaped: 32 text layers + a 24-block vision tower + lm_head."""
+
+    def __init__(self, vision_uses_same_names=False):
+        H, Q, KV, I = 2560, 4096, 1024, 9728
+        self.mods = []
+        for i in range(32):
+            for n, (a, b) in {
+                "q_proj": (H, Q), "k_proj": (H, KV), "v_proj": (H, KV), "o_proj": (Q, H),
+                "gate_proj": (H, I), "up_proj": (H, I), "down_proj": (I, H),
+            }.items():
+                self.mods.append((f"model.language_model.layers.{i}.{n}", _Lin(a, b)))
+        vname = "q_proj" if vision_uses_same_names else "qkv"
+        for i in range(24):
+            self.mods.append((f"model.visual.blocks.{i}.{vname}", _Lin(1024, 3072)))
+        self.mods.append(("lm_head", _Lin(H, 248320)))
+
+    def named_modules(self):
+        return iter(self.mods)
+
+
+def test_vision_tower_is_excluded():
+    m = _Model()
+    targets = modeling.resolve_target_modules(m, "text-linear")
+    assert "qkv" not in targets
+    assert set(targets) == {"q_proj", "k_proj", "v_proj", "o_proj",
+                            "gate_proj", "up_proj", "down_proj"}
+
+
+def test_lm_head_and_embeddings_excluded():
+    assert "lm_head" not in modeling.resolve_target_modules(_Model(), "text-linear")
+
+
+def test_suffix_collision_falls_back_to_full_names():
+    """If the vision tower also calls a layer `q_proj`, suffix targeting would hit it."""
+    m = _Model(vision_uses_same_names=True)
+    targets = modeling.resolve_target_modules(m, "text-linear")
+    assert all("." in t for t in targets), "expected fully-qualified names on collision"
+    assert not any("visual" in t for t in targets)
+
+
+def test_attn_only_is_just_q_and_v():
+    assert modeling.resolve_target_modules(_Model(), "attn-only") == ["q_proj", "v_proj"]
+
+
+def test_attn_full_includes_k_and_o():
+    assert modeling.resolve_target_modules(_Model(), "attn-full") == \
+        ["k_proj", "o_proj", "q_proj", "v_proj"]
+
+
+def test_unknown_mode_rejected():
+    with pytest.raises(ValueError):
+        modeling.resolve_target_modules(_Model(), "everything-everywhere")
+
+
+def test_lora_params_scale_linearly_with_rank():
+    m = _Model()
+    t = modeling.resolve_target_modules(m, "text-linear")
+    assert modeling.count_lora_params(m, t, 32) == 2 * modeling.count_lora_params(m, t, 16)
+
+
+def test_matched_rank_equalizes_the_parameter_budget():
+    """The fair-contrast guarantee: same budget, only placement differs."""
+    m = _Model()
+    text = modeling.resolve_target_modules(m, "text-linear")
+    qv = modeling.resolve_target_modules(m, "attn-only")
+    r = modeling.matched_rank(m, text, 16, qv)
+    budget = modeling.count_lora_params(m, text, 16)
+    matched = modeling.count_lora_params(m, qv, r)
+    assert abs(matched - budget) / budget < 0.02, "budgets must match within 2%"
+    assert r > 16, "attention-only needs a HIGHER rank to reach the same budget"
+
+
+def test_describe_placement_shows_the_naive_comparison_is_unfair():
+    rows = {r["placement"]: r for r in modeling.describe_placement(_Model(), 16)}
+    naive = rows["attn-only(q,v)"]["trainable"]
+    full = rows["text-linear"]["trainable"]
+    assert naive < full / 2, "same-rank q,v has far fewer params — comparing them proves nothing"
+
+
+def test_layer_type_summary_surfaces_hybrid_attention():
+    class Cfg:
+        num_hidden_layers = 32
+        full_attention_interval = 4
+        linear_num_key_heads = 16
+        layer_types = ["linear_attention"] * 24 + ["full_attention"] * 8
+    s = modeling.layer_type_summary(Cfg())
+    assert s["layer_types"] == {"linear_attention": 24, "full_attention": 8}
+    assert s["full_attention_interval"] == 4
+
+
+# --- version-defensive config ----------------------------------------------
+
+@dataclasses.dataclass
+class _OldSFTConfig:
+    output_dir: str = "."
+    max_length: int = 512
+    learning_rate: float = 1e-4
+    packing: bool = False
+    # deliberately missing: padding_free, loss_type, assistant_only_loss
+
+
+def test_filter_kwargs_drops_unknown_and_warns():
+    desired = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "out")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        kept, dropped = train.filter_kwargs(_OldSFTConfig, desired, label="SFTConfig")
+    assert "padding_free" in dropped and "loss_type" in dropped
+    assert "max_length" in kept and "learning_rate" in kept
+    assert caught and "does not accept" in str(caught[0].message)
+    _OldSFTConfig(**kept)          # must actually construct
+
+
+def test_sft_kwargs_use_the_post_v1_names():
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "out")
+    assert "max_length" in kw and "max_seq_length" not in kw
+    assert "eval_strategy" not in kw or "evaluation_strategy" not in kw
+    assert kw["padding_free"] is True and kw["packing"] is True
+    assert kw["loss_type"] == "chunked_nll"
+    assert kw["assistant_only_loss"] is True
+
+
+def test_effective_batch_ceiling_is_enforced():
+    from labkit.config import Tier
+    bad = Tier("BAD", "m", 1, 1024, 8, 8, "")     # 8*8 = 64 > 32
+    with pytest.raises(ValueError, match="effective batch"):
+        train.sft_config_kwargs(bad, SPECS["correct"], "out")
+
+
+def test_every_shipped_tier_respects_the_ceiling():
+    for name, tier in TIERS.items():
+        assert tier.effective_batch <= 32, f"tier {name} violates the §10.4 batch rule"
+
+
+def test_lora_kwargs_reject_an_unresolved_rank():
+    with pytest.raises(ValueError, match="unresolved rank"):
+        train.lora_config_kwargs(SPECS["attn_only"], ["q_proj"])
+
+
+def test_lora_kwargs_keep_the_alpha_equals_2r_invariant():
+    kw = train.lora_config_kwargs(SPECS["attn_only"].resolved(90), ["q_proj", "v_proj"])
+    assert kw["r"] == 90 and kw["lora_alpha"] == 180
+
+
+def test_everything_mask_mode_disables_completion_only():
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", mask_mode="everything")
+    assert kw["completion_only_loss"] is False and "assistant_only_loss" not in kw

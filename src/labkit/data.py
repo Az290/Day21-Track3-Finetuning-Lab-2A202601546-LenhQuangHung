@@ -1,0 +1,250 @@
+"""Chat templating, loss masking, and dataset prep.
+
+The deck's claim (§13.2) is that loss masking and the chat template decide more
+outcomes than every LoRA variant combined. This module exists so you can *see* the
+mask rather than trust a library flag.
+
+The masking technique used here is the tokenizer-agnostic one:
+
+    prefix = apply_chat_template(messages[:i], add_generation_prompt=True)
+    full   = apply_chat_template(messages[:i+1])
+    supervised span = full[len(prefix):]
+
+That is, render the conversation twice around each assistant turn and take the
+difference. It works for any template, and it fails *loudly* when a template is not
+prefix-stable — which is itself a bug worth catching before you train.
+"""
+from __future__ import annotations
+
+import statistics
+from dataclasses import dataclass, field
+
+IGNORE_INDEX = -100
+
+# What the loss is computed over. Deck §13.5: on a reasoning base, this choice can
+# preserve or destroy the model's reasoning behaviour, and the safe option is
+# model-dependent — so it is a parameter, not a constant.
+MASK_MODES = ("assistant-only", "masked-think", "response-only", "everything")
+
+
+@dataclass
+class Example:
+    input_ids: list[int]
+    labels: list[int]
+    n_supervised: int
+    n_total: int
+
+    @property
+    def supervised_fraction(self) -> float:
+        return self.n_supervised / max(1, self.n_total)
+
+
+class TemplateNotPrefixStable(RuntimeError):
+    """Raised when apply_chat_template(msgs[:i+1]) does not start with the i-prefix.
+
+    If you hit this, the template is rewriting earlier turns as the conversation grows
+    (some templates move a system prompt, or strip reasoning from previous turns).
+    Masking by difference is unsafe there — inspect the rendered strings before
+    training, and see `thinking_survives()`.
+    """
+
+
+def _encode(tokenizer, messages, add_generation_prompt: bool, enable_thinking: bool | None):
+    kwargs = dict(tokenize=True, add_generation_prompt=add_generation_prompt)
+    if enable_thinking is not None:
+        # Not every template accepts this; pass it only when asked for.
+        kwargs["enable_thinking"] = enable_thinking
+    out = tokenizer.apply_chat_template(messages, **kwargs)
+    # HF returns list[int] or BatchEncoding depending on version/template.
+    if hasattr(out, "input_ids"):
+        out = out.input_ids
+    if out and isinstance(out[0], list):
+        out = out[0]
+    return list(out)
+
+
+def find_span(haystack: list[int], needle: list[int], start: int = 0) -> int:
+    """Index of `needle` in `haystack` at/after `start`, or -1."""
+    if not needle:
+        return -1
+    n = len(needle)
+    for i in range(start, len(haystack) - n + 1):
+        if haystack[i:i + n] == needle:
+            return i
+    return -1
+
+
+def build_example(
+    tokenizer,
+    messages: list[dict],
+    max_length: int = 1024,
+    mask_mode: str = "assistant-only",
+    enable_thinking: bool | None = None,
+    think_open: str = "<think>",
+    think_close: str = "</think>",
+) -> Example:
+    """Tokenize a conversation and build the label mask.
+
+    mask_mode:
+      "assistant-only" — supervise every assistant token (the usual SFT default)
+      "masked-think"   — supervise the assistant turn but NOT its reasoning block
+      "response-only"  — supervise only what follows </think> (strictest)
+      "everything"     — supervise all tokens, prompt included. This is the classic
+                         bug (§16: "model writes your question back at you"); it is
+                         selectable so NB1 can show you what it looks like.
+    """
+    if mask_mode not in MASK_MODES:
+        raise ValueError(f"mask_mode must be one of {MASK_MODES}, got {mask_mode!r}")
+
+    full_ids = _encode(tokenizer, messages, False, enable_thinking)
+    labels = [IGNORE_INDEX] * len(full_ids)
+
+    if mask_mode == "everything":
+        labels = list(full_ids)
+    else:
+        for i, msg in enumerate(messages):
+            if msg.get("role") != "assistant":
+                continue
+            prefix = _encode(tokenizer, messages[:i], True, enable_thinking)
+            upto = _encode(tokenizer, messages[:i + 1], False, enable_thinking)
+            if upto[:len(prefix)] != prefix:
+                raise TemplateNotPrefixStable(
+                    f"turn {i}: rendering messages[:{i+1}] does not extend messages[:{i}]. "
+                    "Masking by difference is unsafe with this template."
+                )
+            start, end = len(prefix), len(upto)
+            if mask_mode in ("masked-think", "response-only"):
+                start = _skip_reasoning(
+                    tokenizer, full_ids, start, end, think_open, think_close,
+                    include_prompt_gap=(mask_mode == "response-only"),
+                )
+            for j in range(start, min(end, len(full_ids))):
+                labels[j] = full_ids[j]
+
+    if len(full_ids) > max_length:
+        full_ids = full_ids[:max_length]
+        labels = labels[:max_length]
+
+    return Example(
+        input_ids=full_ids,
+        labels=labels,
+        n_supervised=sum(1 for x in labels if x != IGNORE_INDEX),
+        n_total=len(full_ids),
+    )
+
+
+def _skip_reasoning(tokenizer, ids, start, end, think_open, think_close, include_prompt_gap):
+    """Move `start` past a closing reasoning tag inside [start, end), if present."""
+    close_ids = tokenizer.encode(think_close, add_special_tokens=False)
+    at = find_span(ids[:end], close_ids, start)
+    if at == -1:
+        return start           # no reasoning block in this turn — nothing to skip
+    return at + len(close_ids)
+
+
+# --- inspection helpers: the point of NB1 -----------------------------------
+
+def decode_supervised(tokenizer, ex: Example) -> str:
+    """Exactly the text the loss is computed on. Read this before you train."""
+    kept = [t for t, l in zip(ex.input_ids, ex.labels) if l != IGNORE_INDEX]
+    return tokenizer.decode(kept, skip_special_tokens=False)
+
+
+def decode_masked(tokenizer, ex: Example) -> str:
+    """The complement: everything the model sees but is not scored on."""
+    dropped = [t for t, l in zip(ex.input_ids, ex.labels) if l == IGNORE_INDEX]
+    return tokenizer.decode(dropped, skip_special_tokens=False)
+
+
+def thinking_survives(tokenizer, think_open="<think>", think_close="</think>") -> dict:
+    """Deck §16: some chat templates DELETE reasoning blocks inside apply_chat_template.
+
+    If that happens, the reasoning traces in your dataset never reach the loss — and
+    nothing errors. Run this once per base model, before training.
+    """
+    body = "buoc 1: kiem tra. buoc 2: tra loi."
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": f"{think_open}{body}{think_close}4"},
+    ]
+    try:
+        rendered = tokenizer.apply_chat_template(messages, tokenize=False)
+    except Exception as exc:                      # pragma: no cover - template variance
+        return {
+            "ok": False,
+            "error": repr(exc),
+            "rendered": None,
+            "open_tag_present": False,
+            "body_present": False,
+            "verdict": f"TEMPLATE FAILED TO RENDER: {exc}",
+        }
+    if isinstance(rendered, list):
+        rendered = rendered[0]
+    return {
+        "ok": body in rendered,
+        "open_tag_present": think_open in rendered,
+        "body_present": body in rendered,
+        "rendered": rendered,
+        "verdict": (
+            "reasoning preserved — safe to train on traces"
+            if body in rendered
+            else "TEMPLATE STRIPS REASONING — your traces will never reach the loss"
+        ),
+    }
+
+
+def token_stats(lengths: list[int]) -> dict:
+    """p50/p95/p99 so `max_length` is a measurement, not a guess (deck §13)."""
+    if not lengths:
+        return {"n": 0}
+    ordered = sorted(lengths)
+
+    def pct(p: float) -> int:
+        # Nearest-rank percentile: index = ceil(p * n) - 1. Chosen over
+        # round(p*(n-1)) because Python's round() is banker's rounding, which makes
+        # the median of 1..100 land on 51 instead of 50 — a silent off-by-one in the
+        # number students use to set `max_length`.
+        import math
+        idx = min(len(ordered) - 1, max(0, math.ceil(p * len(ordered)) - 1))
+        return ordered[idx]
+
+    return {
+        "n": len(ordered),
+        "mean": round(statistics.fmean(ordered), 1),
+        "p50": pct(0.50),
+        "p95": pct(0.95),
+        "p99": pct(0.99),
+        "max": ordered[-1],
+        "suggested_max_length": _round_pow2(pct(0.95)),
+    }
+
+
+def _round_pow2(n: int) -> int:
+    p = 256
+    while p < n and p < 32768:
+        p *= 2
+    return p
+
+
+def to_messages(record: dict) -> list[dict]:
+    """Normalize the common instruction formats to a messages list."""
+    if "messages" in record and isinstance(record["messages"], list):
+        return record["messages"]
+    instruction = record.get("instruction") or record.get("prompt") or record.get("question") or ""
+    context = record.get("input") or record.get("context") or ""
+    output = record.get("output") or record.get("response") or record.get("answer") or ""
+    user = f"{instruction}\n\n{context}".strip() if context else str(instruction).strip()
+    return [
+        {"role": "user", "content": user},
+        {"role": "assistant", "content": str(output).strip()},
+    ]
+
+
+def split(records: list, train_frac: float = 0.9, seed: int = 42) -> tuple[list, list]:
+    """Deterministic split. Same seed in every notebook so runs stay comparable."""
+    import random
+    rng = random.Random(seed)
+    idx = list(range(len(records)))
+    rng.shuffle(idx)
+    cut = int(len(idx) * train_frac)
+    return [records[i] for i in idx[:cut]], [records[i] for i in idx[cut:]]

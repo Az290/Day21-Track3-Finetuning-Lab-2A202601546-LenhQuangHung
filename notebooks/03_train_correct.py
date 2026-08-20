@@ -1,0 +1,142 @@
+# %% [markdown]
+# # NB3 — Huấn luyện cấu hình ĐÚNG
+#
+# Cấu hình ở đây là "vùng không hối tiếc" của deck §10, viết thẳng thành code:
+#
+# | Nút | Giá trị | Deck |
+# |---|---|---|
+# | `target_modules` | **toàn bộ linear của text decoder** | §10.2 |
+# | `learning_rate` | **≈10× LR full-FT** | §10.3 |
+# | batch hiệu dụng | **< 32** | §10.4 |
+# | `packing` + `padding_free` | cùng bật | §13.3 |
+# | `loss_type` | `chunked_nll` | §15 |
+# | `alpha` | `2r` | §9.3 |
+
+# %%
+import json, os, pathlib, sys, time
+sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
+sys.path.insert(0, str(pathlib.Path.cwd().parent / "src"))
+
+from labkit import data, generate, modeling, report, train
+from labkit.config import SPECS, get_tier
+
+ROOT = pathlib.Path.cwd() if (pathlib.Path.cwd() / "data").exists() else pathlib.Path.cwd().parent
+TIER = get_tier(os.environ.get("COMPUTE_TIER", "T4"))
+SPEC = SPECS["correct"]
+print(f"{TIER.name} · {TIER.model_id} · {SPEC.label}")
+
+# %% [markdown]
+# ## 1. Nạp model — và nhìn vào kiến trúc bạn đang fine-tune
+#
+# Deck §6.4 nói các base 2026 xen kẽ **linear attention** với **full attention**. Đây là
+# chỗ điều đó thôi là slide: config của chính model sẽ nói cho bạn biết.
+
+# %%
+model, tok = generate.load_base(TIER, load_in_4bit=SPEC.load_in_4bit)
+print(json.dumps(modeling.layer_type_summary(model.config), ensure_ascii=False, indent=2))
+
+# %% [markdown]
+# ## 2. `all-linear` — nhưng không phải *mọi* linear
+#
+# Qwen3.5 là model **đa phương thức**: text decoder + vision tower. `target_modules=
+# "all-linear"` của PEFT sẽ gắn adapter vào **cả vision encoder** bạn không hề huấn
+# luyện — adapter phình to, step chậm hơn, và merge ra một checkpoint sai.
+#
+# `resolve_target_modules` trả về đúng phần text decoder.
+
+# %%
+targets = modeling.resolve_target_modules(model, SPEC.target)
+trainable = modeling.count_lora_params(model, targets, SPEC.r)
+print(f"placement={SPEC.target}  modules={targets}")
+print(f"trainable LoRA params ≈ {trainable/1e6:.2f} M")
+
+for row in modeling.describe_placement(model, SPEC.r):
+    print("   ", row)
+
+# %% [markdown]
+# ## 3. Dataset đã tokenize + mask (dùng lại NB1)
+
+# %%
+from datasets import Dataset
+
+split_dir = ROOT / "data" / "split"
+assert split_dir.exists(), "Chạy NB1 trước — chưa có data/split/"
+
+def load_jsonl(p):
+    return [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
+
+train_rows = load_jsonl(split_dir / "train.jsonl")
+MASK_MODE = os.environ.get("MASK_MODE", "assistant-only")
+
+def to_chat(r):
+    return {"messages": data.to_messages(r)}
+
+train_ds = Dataset.from_list([to_chat(r) for r in train_rows])
+print(train_ds)
+print("mask_mode =", MASK_MODE)
+
+# %% [markdown]
+# ## 4. Cấu hình — lọc theo phiên bản TRL đang cài
+#
+# `filter_kwargs` hỏi TRL xem nó nhận tham số nào và **bỏ những gì không nhận, có cảnh
+# báo**. Lab cũ phải monkey-patch `tokenizer=` → `processing_class=` và
+# `evaluation_strategy` → `eval_strategy`; những bản vá đó là hoá thạch của TRL trước
+# 1.0. Cách này không tạo ra hoá thạch mới.
+
+# %%
+from peft import LoraConfig
+from trl import SFTConfig, SFTTrainer
+
+want_sft = train.sft_config_kwargs(
+    TIER, SPEC, output_dir=str(ROOT / "adapters" / SPEC.key),
+    num_train_epochs=float(os.environ.get("EPOCHS", 2)), mask_mode=MASK_MODE,
+)
+sft_kwargs, dropped = train.filter_kwargs(SFTConfig, want_sft, label="SFTConfig")
+if dropped:
+    print("⚠ TRL không nhận:", dropped)
+
+want_lora = train.lora_config_kwargs(SPEC, targets)
+lora_kwargs, _ = train.filter_kwargs(LoraConfig, want_lora, label="LoraConfig")
+
+print(json.dumps({k: str(v) for k, v in sft_kwargs.items()}, indent=2)[:900])
+
+# %% [markdown]
+# ## 5. Train
+
+# %%
+generate.free_memory()
+trainer = SFTTrainer(
+    model=model,
+    args=SFTConfig(**sft_kwargs),
+    train_dataset=train_ds,
+    processing_class=tok,          # NOT tokenizer= — removed in TRL v1
+    peft_config=LoraConfig(**lora_kwargs),
+)
+
+t0 = time.perf_counter()
+result = trainer.train()
+elapsed = time.perf_counter() - t0
+print(f"train {elapsed:.0f}s  final loss {result.training_loss:.4f}")
+
+# %% [markdown]
+# ## 6. LƯU ADAPTER NGAY
+#
+# Trước khi eval. Eval có thể OOM; adapter thì đã an toàn trên đĩa.
+
+# %%
+out = ROOT / "adapters" / SPEC.key
+trainer.model.save_pretrained(out)
+tok.save_pretrained(out)
+print("saved ->", out)
+
+row = train.summarize_run(SPEC, TIER, targets, trainable, elapsed, generate.peak_vram_gb())
+row["final_loss"] = round(result.training_loss, 4)
+row["mask_mode"] = MASK_MODE
+report.append_row(row, results_dir=ROOT / "results")
+print(json.dumps(row, ensure_ascii=False, indent=2))
+
+# %% [markdown]
+# ## ✅ Checkpoint NB3
+# - [ ] `adapters/correct/` tồn tại
+# - [ ] `results/runs.csv` có một dòng `correct`
+# - [ ] Bạn đã ghi lại loss cuối và peak VRAM

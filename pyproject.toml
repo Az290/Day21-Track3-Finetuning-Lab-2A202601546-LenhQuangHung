@@ -1,0 +1,13 @@
+[project]
+name = "day21-finetuning-lab"
+version = "1.0.0"
+description = "VinUni AICB Day 21 — Fine-tuning LLMs (LoRA/QLoRA) lab"
+requires-python = ">=3.10,<3.15"   # unsloth caps at <3.15; transformers 5 needs >=3.10
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+addopts = "-q"
+
+[tool.jupytext]
+formats = "py:percent"
