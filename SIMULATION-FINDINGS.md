@@ -351,8 +351,90 @@ exists. +1 test that fakes a T4 (`capability 7.5`, `is_bf16_supported() → True
 asserts we still choose fp16. **80 tests.**
 
 **The lesson worth carrying:** a capability API that answers "yes, by emulation" is
-worse than no API. Two of this lab's fifteen findings (F-10, F-15) are the same shape —
-a library saying *yes* to something it is not really doing.
+worse than no API. Three of this lab's eighteen findings (F-10, F-15, F-16) are the same
+shape — a library saying *yes*, or saying nothing much, about something it is not
+really doing.
+
+---
+
+## F-16 — `warmup_ratio` no longer exists, so every run trained with **no warmup** — **FIXED**
+
+Visible in NB3's own config dump, one line above the hyper-parameters:
+
+```
+⚠ TRL không nhận: ['warmup_ratio']
+```
+
+`filter_kwargs` did its job and said so. Nobody read it — including me, across a full
+NB3 run.
+
+transformers v5 / TRL 1.10 removed the field. Measured on the Colab VM:
+
+```python
+[f.name for f in dataclasses.fields(SFTConfig) if "warm" in f.name]
+# -> ['warmup_steps']          # no ratio field at all
+```
+
+So `sft_config_kwargs` asked for a knob that does not exist, the filter dropped it with a
+warning, and training ran with a cosine schedule and **zero warmup** while printing a
+config the reader would assume included it.
+
+**Fix.** Convert the deck's 10% into an absolute step count via a new
+`train.planned_steps()`, and emit `warmup_steps`. +3 tests.
+
+**The lesson.** F-16 is the *cost* of the version-defensive design that F-10 justified.
+Dropping unknown kwargs converts a loud `TypeError` into a quiet behaviour change; the
+warning is only a safeguard if something fails when it fires. A stricter contract —
+"warn, and fail if the dropped key is one the recipe depends on" — would have caught
+this at step 0 instead of after a 25-minute run.
+
+---
+
+## F-17 — the contrasts were trained **twice as long** as the baseline they are compared against — **FIXED**
+
+`config.py` stated the requirement and then broke it:
+
+```python
+# Every contrast run gets the SAME number of optimizer steps as the NB3 baseline
+# slice, otherwise the comparison measures wall-clock, not configuration.
+CONTRAST_MAX_STEPS = 60
+```
+
+NB3 does not run 60 steps. It runs an *epoch* budget — 2 epochs × ⌈225/16⌉ — which the
+real T4 run printed as `100% 30/30`. So each of NB4's three contrasts got **2× the
+training** of the `correct` run it is measured against, and NB4's own prose had already
+absorbed the bug as a workaround:
+
+> `correct` từ NB3 chạy nhiều step hơn — **đừng so loss trực tiếp với nó** … hãy chạy
+> lại `correct` với `max_steps=CONTRAST_MAX_STEPS` (một dòng, **~10 phút**)
+
+Two things wrong there. The comparison the notebook is *for* was being deferred to an
+optional manual re-run; and "~10 phút" is the estimate the constant was sized against —
+measured at 48.5 s/step, 60 steps is **48 minutes** per contrast, so NB4 alone was a
+**~145 minute** stage inside a lab advertised at ~80.
+
+**Fix.** Both sides derive the budget from the same recipe
+(`train.planned_steps(len(train_ds), TIER, CONTRAST_EPOCHS)`), so the autopsy varies one
+variable instead of two, the manual fix-up disappears, and NB4 drops to ~73 min. +2 tests.
+
+**Caught by arithmetic, not by running it** — NB4 had never executed. The measured
+48.5 s/step from the one completed NB3 run is what made the 60 visibly wrong.
+
+---
+
+## F-18 — the generated Colab notebooks were stale and still shipped the F-13 crash — **FIXED**
+
+`colab/*.ipynb` is generated from `notebooks/*.py` by `scripts/build_colab.py`. The F-13
+fix added `torchao>=0.16` to that script's BOOTSTRAP — but the notebooks were never
+regenerated and committed, so all six still carried the old bootstrap.
+
+Consequence: the RUN_ALL path was fixed, while the **per-notebook Colab badges in the
+README** — the entry point a student following the lab notebook-by-notebook actually
+uses — still walked into the torchao 0.10 `ImportError` at `get_peft_model()`.
+
+Found only because F-17 forced a regeneration and the diff showed an unrelated line
+changing. **Generated artifacts that are committed need a build step in the gate**, or
+they drift silently from their source.
 
 ---
 
