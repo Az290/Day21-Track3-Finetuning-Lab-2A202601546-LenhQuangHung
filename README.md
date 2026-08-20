@@ -61,7 +61,14 @@ Mọi thứ còn lại là chi tiết kỹ thuật phục vụ hai câu này.
 
 ### Colab (khuyến nghị)
 
-Mở `colab/Lab21_T4.ipynb` → Runtime → Change runtime type → **T4 GPU** → Run all.
+Mở **[`colab/Lab21_RUN_ALL.ipynb`](https://colab.research.google.com/github/hieutrungdao/Day21-Track3-Finetuning-Lab/blob/main/colab/Lab21_RUN_ALL.ipynb)**
+→ Runtime → Change runtime type → **T4 GPU** → chạy lần lượt ô 1 → 4.
+
+> **Mỗi lần repo đổi, hãy mở LẠI tab (reload), đừng chỉ reconnect.** Colab đọc mã
+> notebook từ GitHub đúng **một lần**, lúc URL được mở; reconnect, đổi runtime hay máy ảo
+> mới đều không nạp lại. Ô Setup cũ vẫn chạy "xanh" và vẫn in đúng commit mới nhất — vì
+> chính nó `git pull` repo — nhưng cài theo *danh sách gói cũ*. Lỗi sẽ nổ ~10 phút sau,
+> bên trong `get_peft_model()`. Xem F-19 trong `SIMULATION-FINDINGS.md`.
 
 ### Máy cá nhân
 

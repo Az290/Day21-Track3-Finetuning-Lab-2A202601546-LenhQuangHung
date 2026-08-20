@@ -26,11 +26,13 @@ if not os.path.exists("Day21-Track3-Finetuning-Lab"):
 os.chdir("Day21-Track3-Finetuning-Lab")
 sys.path.insert(0, "src")
 
-# torch is preinstalled on Colab — install the rest.
-subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-                "transformers>=5.15,<6", "trl>=1.10,<2", "peft>=0.20,<1",
-                "accelerate>=1.14,<2", "datasets>=5,<6", "jinja2>=3.1,<4",
-                "bitsandbytes>=0.50,<1", "torchao>=0.16"], check=True)
+# Install from requirements.txt, NOT a copied list. The copied list is how the
+# torchao>=0.16 pin reached requirements.txt and this bootstrap on different days --
+# and a bootstrap missing a pin does not fail here, it fails 10 minutes later inside
+# get_peft_model(). One source of truth. torch is preinstalled on Colab and
+# requirements.txt pins it compatibly, so that line is a no-op.
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+               check=True)
 
 os.environ.setdefault("COMPUTE_TIER", "T4")
 import torch

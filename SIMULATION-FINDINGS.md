@@ -438,6 +438,74 @@ they drift silently from their source.
 
 ---
 
+## F-19 — Colab never re-reads the notebook, so a long-lived tab runs *old* code — **ENVIRONMENT, not the repo**
+
+Cost me an 8-minute pipeline run and looked exactly like a regression.
+
+The restarted run died at NB3 with the F-13 error — `Found an incompatible version of
+torchao. Found version 0.10.0` — a bug fixed two days earlier, in a VM where cell 1 had
+just run green.
+
+Cell 1 was **stale**. Colab fetches notebook source from GitHub *once*, when the URL is
+opened, and never again: not on reconnect, not on a new runtime, not when the repo moves.
+This tab was opened in the previous session, before `82bda58` added the pin, so the cell
+it ran was the pre-fix list. It installed the seven packages it knew about, reported
+success in 4 s, and left `torchao 0.10.0` in place.
+
+Three symptoms that make this hard to read correctly:
+
+* the cell **succeeds** — nothing in its output hints the source is old
+* `git pull` inside the cell updates the *repo*, which makes the environment look fresh
+  while the cell doing the pulling is itself out of date
+* the printed `commit :` line reports the freshly pulled HEAD — **a stale cell can print
+  a current commit hash**, which is actively misleading
+
+**Not a repo defect** — the committed notebook is correct, and any student opening the
+badge gets it. Worth a README line anyway, because "reconnect and re-run" is the natural
+reaction to a disconnect and it silently preserves the stale source. The reliable move
+after any repo change is to reload the browser tab, not just the runtime.
+
+---
+
+## F-20 — the dependency list existed in **three** hand-synced copies — **FIXED**
+
+`requirements.txt`, `scripts/build_colab.py`'s BOOTSTRAP, and `colab/Lab21_RUN_ALL.ipynb`
+cell 1 each carried their own copy of the same pins. Keeping them in sync was manual, and
+it had already failed twice:
+
+* **F-18** — BOOTSTRAP got `torchao>=0.16`, the generated notebooks did not
+* **F-13's recurrence** — the pin reached `requirements.txt` and the two bootstraps on
+  different days, which is what made F-19 possible at all
+
+The failure mode is nasty because a bootstrap missing a pin **does not fail at install
+time**. It exits 0, and the run dies ten minutes later inside `get_peft_model()`, with a
+traceback pointing at peft rather than at the install cell that actually caused it.
+
+**Fix.** Both bootstraps now `pip install -q -r requirements.txt`. The repo is cloned
+before the install, so the file is available; torch is preinstalled on Colab and
+`requirements.txt` pins it compatibly, so that line is a no-op. One source of truth.
+
+---
+
+## F-21 — the README's Quick Start pointed at a notebook that does not exist — **FIXED**
+
+```
+### Colab (khuyến nghị)
+Mở `colab/Lab21_T4.ipynb` → Runtime → Change runtime type → T4 GPU → Run all.
+```
+
+There is no `colab/Lab21_T4.ipynb`. The directory holds `Lab21_01`..`Lab21_06` and
+`Lab21_RUN_ALL`. The **first instruction in the lab** named a file that was never
+generated — a leftover from an earlier naming scheme that no test covers, because nothing
+verifies that documentation references resolve.
+
+Found by grepping the README for "colab" while fixing something else, not by any check.
+
+**Fix.** Point at `Lab21_RUN_ALL.ipynb` as a clickable Colab link, and fold the F-19
+reload warning in next to it — that is where a student is standing when it bites them.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
