@@ -4,15 +4,24 @@ The deck's claim (§13.2) is that loss masking and the chat template decide more
 outcomes than every LoRA variant combined. This module exists so you can *see* the
 mask rather than trust a library flag.
 
-The masking technique used here is the tokenizer-agnostic one:
+The masking technique used here renders the conversation to **text** around each
+assistant turn, then maps character spans onto tokens:
 
-    prefix = apply_chat_template(messages[:i], add_generation_prompt=True)
-    full   = apply_chat_template(messages[:i+1])
-    supervised span = full[len(prefix):]
+    prefix = apply_chat_template(messages[:i], add_generation_prompt=True)   # text
+    upto   = apply_chat_template(messages[:i+1])                             # text
+    supervised characters = [len(prefix), len(upto))
+    supervised tokens     = tokens whose offsets fall inside that range
 
-That is, render the conversation twice around each assistant turn and take the
-difference. It works for any template, and it fails *loudly* when a template is not
-prefix-stable — which is itself a bug worth catching before you train.
+**Why not just diff the token lists?** Because that is wrong on real templates, and
+Qwen3.5 is the counter-example. Its prefix ends `<think>\n` while the full render
+continues `\n</think>`; tokenized separately the trailing `\n` is its own token, but
+tokenized together `\n\n` merges into a *different single token*. The token lists are
+therefore not prefix-related even though the strings are. Diffing tokens raises a
+false alarm at best and silently mis-masks at worst.
+
+Characters do not have this problem, and `return_offsets_mapping` gives the mapping
+back to tokens — including for special tokens like `<|im_end|>`, which must stay
+supervised because it is the model's stop signal.
 """
 from __future__ import annotations
 
@@ -49,18 +58,33 @@ class TemplateNotPrefixStable(RuntimeError):
     """
 
 
-def _encode(tokenizer, messages, add_generation_prompt: bool, enable_thinking: bool | None):
-    kwargs = dict(tokenize=True, add_generation_prompt=add_generation_prompt)
+def _render(tokenizer, messages, add_generation_prompt: bool, enable_thinking: bool | None) -> str:
+    """Render a conversation to text (never to tokens — see the module docstring)."""
+    kwargs = dict(tokenize=False, add_generation_prompt=add_generation_prompt)
     if enable_thinking is not None:
         # Not every template accepts this; pass it only when asked for.
         kwargs["enable_thinking"] = enable_thinking
     out = tokenizer.apply_chat_template(messages, **kwargs)
-    # HF returns list[int] or BatchEncoding depending on version/template.
-    if hasattr(out, "input_ids"):
-        out = out.input_ids
-    if out and isinstance(out[0], list):
+    if isinstance(out, list):
         out = out[0]
-    return list(out)
+    return out
+
+
+def _encode_with_offsets(tokenizer, text: str):
+    """Tokenize rendered chat text, returning (ids, char_offsets).
+
+    `add_special_tokens=False` because the template already emits them; this was
+    verified to reproduce `apply_chat_template(tokenize=True)` exactly on Qwen3.5.
+    """
+    enc = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+    offsets = enc.get("offset_mapping")
+    if offsets is None:
+        raise RuntimeError(
+            "This tokenizer did not return offset mappings (is it a 'slow' tokenizer?). "
+            "Loss masking here needs a fast tokenizer: "
+            "AutoTokenizer.from_pretrained(..., use_fast=True)."
+        )
+    return list(enc["input_ids"]), list(offsets)
 
 
 def find_span(haystack: list[int], needle: list[int], start: int = 0) -> int:
@@ -96,7 +120,8 @@ def build_example(
     if mask_mode not in MASK_MODES:
         raise ValueError(f"mask_mode must be one of {MASK_MODES}, got {mask_mode!r}")
 
-    full_ids = _encode(tokenizer, messages, False, enable_thinking)
+    full_text = _render(tokenizer, messages, False, enable_thinking)
+    full_ids, offsets = _encode_with_offsets(tokenizer, full_text)
     labels = [IGNORE_INDEX] * len(full_ids)
 
     if mask_mode == "everything":
@@ -105,21 +130,21 @@ def build_example(
         for i, msg in enumerate(messages):
             if msg.get("role") != "assistant":
                 continue
-            prefix = _encode(tokenizer, messages[:i], True, enable_thinking)
-            upto = _encode(tokenizer, messages[:i + 1], False, enable_thinking)
-            if upto[:len(prefix)] != prefix:
+            prefix_text = _render(tokenizer, messages[:i], True, enable_thinking)
+            upto_text = _render(tokenizer, messages[:i + 1], False, enable_thinking)
+            if not full_text.startswith(prefix_text):
                 raise TemplateNotPrefixStable(
-                    f"turn {i}: rendering messages[:{i+1}] does not extend messages[:{i}]. "
-                    "Masking by difference is unsafe with this template."
+                    f"turn {i}: rendering messages[:{i}] with add_generation_prompt is not "
+                    "a text prefix of the full render. This template rewrites earlier "
+                    "turns as the conversation grows; masking by difference is unsafe."
                 )
-            start, end = len(prefix), len(upto)
+            start_char, end_char = len(prefix_text), len(upto_text)
             if mask_mode in ("masked-think", "response-only"):
-                start = _skip_reasoning(
-                    tokenizer, full_ids, start, end, think_open, think_close,
-                    include_prompt_gap=(mask_mode == "response-only"),
-                )
-            for j in range(start, min(end, len(full_ids))):
-                labels[j] = full_ids[j]
+                start_char = _skip_reasoning_chars(
+                    full_text, start_char, end_char, think_close)
+            for j, (a, b) in enumerate(offsets):
+                if b > a and a >= start_char and b <= end_char:
+                    labels[j] = full_ids[j]
 
     if len(full_ids) > max_length:
         full_ids = full_ids[:max_length]
@@ -133,13 +158,17 @@ def build_example(
     )
 
 
-def _skip_reasoning(tokenizer, ids, start, end, think_open, think_close, include_prompt_gap):
-    """Move `start` past a closing reasoning tag inside [start, end), if present."""
-    close_ids = tokenizer.encode(think_close, add_special_tokens=False)
-    at = find_span(ids[:end], close_ids, start)
+def _skip_reasoning_chars(text: str, start: int, end: int, think_close: str) -> int:
+    """Move `start` past a closing reasoning tag inside text[start:end), if present.
+
+    Character-based for the same reason as the main path: tag boundaries do not align
+    with token boundaries. Qwen3.5 emits `<think>\n\n</think>\n\n` even for a
+    non-reasoning answer, so this fires on ordinary data too.
+    """
+    at = text.find(think_close, start, end)
     if at == -1:
         return start           # no reasoning block in this turn — nothing to skip
-    return at + len(close_ids)
+    return at + len(think_close)
 
 
 # --- inspection helpers: the point of NB1 -----------------------------------

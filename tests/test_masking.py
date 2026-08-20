@@ -136,3 +136,56 @@ def test_split_is_deterministic_and_disjoint():
     assert len(a1) == 90 and len(b1) == 10
     assert not (set(a1) & set(b1))
     assert sorted(a1 + b1) == recs
+
+
+# --- regressions from the Colab simulation (2026-08-21) ---------------------
+# The first implementation diffed TOKEN lists around each assistant turn. That is
+# wrong on Qwen3.5: the generation prompt ends `<think>\n` while the full render
+# continues `\n</think>`, and consecutive newlines merge into a single different
+# token. The strings are prefix-related; the token lists are not. These tests pin
+# the offset-based behaviour that replaced it.
+
+def test_think_scaffold_does_not_trigger_a_false_prefix_alarm():
+    """The exact crash the Colab run hit: plain Q->A data on a reasoning template."""
+    tok = FakeTokenizer()          # think_scaffold on, newline-merging on
+    ex = data.build_example(tok, MSGS, mask_mode="assistant-only")
+    assert ex.n_supervised > 0
+    assert ANSWER in data.decode_supervised(tok, ex)
+
+
+def test_token_lists_really_are_not_prefix_related():
+    """Guards the fixture itself: if this stops holding, the regression above is vacuous."""
+    tok = FakeTokenizer()
+    prefix_ids = tok.apply_chat_template(MSGS[:1], tokenize=True, add_generation_prompt=True)
+    full_ids = tok.apply_chat_template(MSGS, tokenize=True)
+    assert full_ids[:len(prefix_ids)] != prefix_ids, (
+        "the fake no longer reproduces the token-merge boundary — "
+        "the offset-masking regression test would pass for the wrong reason"
+    )
+    # ...but the STRINGS are prefix-related, which is why characters work.
+    prefix_txt = tok.apply_chat_template(MSGS[:1], add_generation_prompt=True)
+    full_txt = tok.apply_chat_template(MSGS)
+    assert full_txt.startswith(prefix_txt)
+
+
+def test_eos_token_is_supervised():
+    """<|im_end|> must be in the loss or the model never learns to stop (deck §16)."""
+    tok = FakeTokenizer()
+    ex = data.build_example(tok, MSGS, mask_mode="assistant-only")
+    assert tok.eos_token in data.decode_supervised(tok, ex)
+
+
+def test_slow_tokenizer_fails_loudly_not_silently():
+    tok = FakeTokenizer(fast=False)
+    with pytest.raises(RuntimeError, match="offset mappings"):
+        data.build_example(tok, MSGS, mask_mode="assistant-only")
+
+
+def test_empty_think_block_is_excluded_by_masked_think():
+    """Qwen3.5 emits <think>\\n\\n</think> even for plain answers; masked-think skips it."""
+    tok = FakeTokenizer()
+    plain = data.build_example(tok, MSGS, mask_mode="assistant-only")
+    masked = data.build_example(tok, MSGS, mask_mode="masked-think")
+    assert "</think>" in data.decode_supervised(tok, plain)
+    assert "</think>" not in data.decode_supervised(tok, masked)
+    assert ANSWER in data.decode_supervised(tok, masked)

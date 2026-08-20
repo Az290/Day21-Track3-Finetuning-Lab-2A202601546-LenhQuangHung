@@ -35,8 +35,10 @@ nb5:  ## NB5 — four-group eval + verdict          (GPU, ~10 min)
 nb6:  ## NB6 — merge + adapter hot-swap (OPTIONAL)(GPU, ~10 min)
 	$(BIN)/python notebooks/06_merge_and_serve.py
 
-pipeline: nb1 nb2 nb3 nb4 nb5  ## CORE: NB1 -> NB5 (~80 min on a T4)
-pipeline-full: pipeline nb6    ## Core + the optional merge/serve notebook
+pipeline:  ## CORE: NB1 -> NB5 back-to-back with live output (~80 min on a T4)
+	$(BIN)/python scripts/colab_run.py nb1 nb2 nb3 nb4 nb5
+pipeline-full:  ## Core + the optional merge/serve notebook
+	$(BIN)/python scripts/colab_run.py all
 
 test:  ## Unit tests only
 	$(BIN)/python -m pytest tests/ -q
