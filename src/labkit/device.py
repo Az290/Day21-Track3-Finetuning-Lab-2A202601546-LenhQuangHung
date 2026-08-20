@@ -25,12 +25,24 @@ def describe() -> dict:
 
     if torch.cuda.is_available():
         major, minor = torch.cuda.get_device_capability(0)
+        # DO NOT use torch.cuda.is_bf16_supported() bare. Its signature is
+        # `is_bf16_supported(including_emulation: bool = True)`, and with the default it
+        # returns True on a T4 — it merely checks that a bf16 tensor can be *created*,
+        # which Turing can do by emulation. Training then "works" at a large speed
+        # penalty while reporting bf16=True. Hardware support is compute capability
+        # >= 8.0 (Ampere), full stop.
+        native_bf16 = major >= 8
+        try:                       # belt and braces on builds that expose the kwarg
+            native_bf16 = native_bf16 and torch.cuda.is_bf16_supported(
+                including_emulation=False)
+        except TypeError:          # older torch without the kwarg
+            pass
         info.update(
             device="cuda",
             name=torch.cuda.get_device_name(0),
             capability=f"{major}.{minor}",
             vram_gb=round(torch.cuda.get_device_properties(0).total_memory / 1024 ** 3, 1),
-            bf16=bool(getattr(torch.cuda, "is_bf16_supported", lambda: major >= 8)()),
+            bf16=bool(native_bf16),
             fp16=True,
         )
     elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():

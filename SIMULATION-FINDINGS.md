@@ -321,6 +321,41 @@ lab now says that out loud instead of setting flags that do not apply.
 
 ---
 
+## F-15 — my own F-07 fix was wrong: `torch.cuda.is_bf16_supported()` returns **True on a T4** — **FIXED**
+
+Caught by reading NB3's config dump during the training run: `"bf16": "True",
+"fp16": "False"` — on a T4, after supposedly fixing exactly this.
+
+The trap is in torch's signature:
+
+```python
+def is_bf16_supported(including_emulation: bool = True):
+    ...
+    if torch.cuda.get_device_properties(device).major >= 8:
+        return True
+    if not including_emulation:
+        return False
+    return _check_bf16_tensor_supported(device)     # <- Turing passes this
+```
+
+**The default is `including_emulation=True`**, and it only checks that a bf16 tensor can
+be *created*. Turing can, by emulation. So the "is bf16 supported?" API answers **yes**
+on hardware with no bf16 units, and training proceeds emulated at a large speed
+penalty while truthfully reporting `bf16=True`.
+
+This very likely explains F-09's slow generation: the whole first NB2 run was emulated.
+
+**Fix.** Compute capability ≥ 8.0 is the real test, with
+`is_bf16_supported(including_emulation=False)` as a secondary check where the kwarg
+exists. +1 test that fakes a T4 (`capability 7.5`, `is_bf16_supported() → True`) and
+asserts we still choose fp16. **80 tests.**
+
+**The lesson worth carrying:** a capability API that answers "yes, by emulation" is
+worse than no API. Two of this lab's fifteen findings (F-10, F-15) are the same shape —
+a library saying *yes* to something it is not really doing.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |

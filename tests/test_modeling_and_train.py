@@ -244,3 +244,40 @@ def test_padding_free_on_sets_max_length_none(monkeypatch):
     kw = train.sft_config_kwargs(get_tier("BIGGPU"), SPECS["correct"], "o")
     assert get_tier("BIGGPU").per_device_batch >= 2
     assert kw["padding_free"] is True and kw["max_length"] is None
+
+
+def test_emulated_bf16_does_not_count_as_bf16_support(monkeypatch):
+    """F-15: torch.cuda.is_bf16_supported() defaults to including_emulation=True and
+    returns True on a T4. Capability >= 8.0 is the real test."""
+    from labkit import device
+
+    class _Props:
+        total_memory = 15 * 1024 ** 3
+
+    class _FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def get_device_capability(_):
+            return (7, 5)                      # Turing / T4
+
+        @staticmethod
+        def get_device_name(_):
+            return "Tesla T4"
+
+        @staticmethod
+        def get_device_properties(_):
+            return _Props()
+
+        @staticmethod
+        def is_bf16_supported(including_emulation=True):
+            return True                        # what torch actually does on a T4
+
+    import torch
+    monkeypatch.setattr(torch, "cuda", _FakeCuda)
+    info = device.describe()
+    assert info["capability"] == "7.5"
+    assert info["bf16"] is False, "emulated bf16 must not be reported as support"
+    assert device.precision() == "fp16"
