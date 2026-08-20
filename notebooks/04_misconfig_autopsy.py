@@ -110,12 +110,38 @@ def run_contrast(key: str) -> dict:
     return row
 
 
+# Resumable on purpose. This notebook is the long one -- three full training runs --
+# and Colab disconnects, hits its idle timeout, and drops runtimes routinely. Losing 55
+# minutes of finished work because the third run crashed is not a lesson about LoRA.
+#
+# An adapter directory that already exists is treated as done. Set FORCE_RETRAIN=1 to
+# retrain everything, and delete `adapters/<key>/` to redo just one.
+FORCE_RETRAIN = os.environ.get("FORCE_RETRAIN", "").lower() in {"1", "true", "yes"}
+ONLY = [k for k in os.environ.get("ONLY", "").split(",") if k.strip()]
+
 rows = []
-for key in CONTRAST_KEYS:
+for key in (ONLY or CONTRAST_KEYS):
+    if key not in SPECS:
+        raise SystemExit(f"unknown run {key!r}; expected some of {CONTRAST_KEYS}")
+    done = (ROOT / "adapters" / key / "adapter_model.safetensors").exists()
+    if done and not FORCE_RETRAIN:
+        print(f"skip {key}: adapters/{key}/ already trained "
+              f"(FORCE_RETRAIN=1 to redo, or delete the directory)")
+        continue
     print("=" * 70)
     print(f"RUN {key}: {SPECS[key].label}")
     print(f"     {SPECS[key].teaches}")
     rows.append(run_contrast(key))
+
+# The table below reads runs.csv, not just this session's rows, so a resumed run still
+# prints all four. Rows are appended, so the last one per key is the current one.
+if not rows:
+    print("nothing retrained this session — reading runs.csv for the table")
+_seen = {}
+for r in report.read_rows("runs.csv", results_dir=ROOT / "results"):
+    if r.get("run"):
+        _seen[r["run"]] = r
+rows = [_seen[k] for k in ["correct", *CONTRAST_KEYS] if k in _seen] or rows
 
 # %% [markdown]
 # ## 3. Bảng đối chứng
