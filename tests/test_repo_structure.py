@@ -113,3 +113,33 @@ def test_nb4_does_not_present_train_loss_as_the_verdict():
     assert "final_loss" in src
     assert "LOSS HUẤN LUYỆN" in src, "the column must be labelled as a training loss"
     assert "NB5" in src, "NB4 must point at the notebook that actually settles the ranking"
+
+
+def _notebook_text(nb_path):
+    import json
+    raw = json.loads(nb_path.read_text(encoding="utf-8"))
+    return "\n".join("".join(c.get("source", [])) for c in raw.get("cells", []))
+
+
+@pytest.mark.parametrize("src", sorted((ROOT / "notebooks").glob("*.py")),
+                         ids=lambda p: p.name)
+def test_generated_notebook_matches_its_source(src):
+    """`colab/*.ipynb` is generated from `notebooks/*.py`, and nothing enforced that the
+    generated copy was rebuilt after the source changed. F-18 is exactly that bug: the
+    notebooks shipped a crash already fixed in the source, so every Colab student hit it
+    while the repo looked correct. Checking only the bootstrap cell was not enough.
+    """
+    nb = ROOT / "colab" / f"Lab21_{src.stem}.ipynb"
+    assert nb.exists(), f"{nb.name} missing — run `make colab`"
+    generated = _notebook_text(nb)
+
+    missing = [
+        line for line in src.read_text(encoding="utf-8").splitlines()
+        if (stripped := line.strip())
+        and not stripped.startswith("#")        # markdown/comments move around
+        and len(stripped) > 12                  # skip `import os`, `rows = []`, ...
+        and stripped not in generated
+    ]
+    assert not missing, (
+        f"{nb.name} is stale — {len(missing)} source lines are not in it. "
+        f"Run `make colab`. First: {missing[0][:90]!r}")
