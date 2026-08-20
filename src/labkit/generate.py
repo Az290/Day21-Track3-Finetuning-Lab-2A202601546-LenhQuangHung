@@ -87,7 +87,7 @@ def generate_batch(
     prompts: list[str],
     system: str | None = None,
     max_new_tokens: int = 160,
-    enable_thinking: bool = False,
+    enable_thinking: bool | None = False,
     batch_size: int = 4,
     label: str = "generate",
     progress: bool = True,
@@ -120,9 +120,17 @@ def generate_batch(
             msgs = ([{"role": "system", "content": system}] if system else []) + \
                    [{"role": "user", "content": p}]
             kw = {"tokenize": False, "add_generation_prompt": True}
+            # None means OMIT the kwarg, matching data._render(). Passing a literal None
+            # is not the same thing: it lands in the Jinja context where `is defined` is
+            # true, so the template may read it as falsey and quietly behave like False.
+            # Training and generation have to be able to express "template default"
+            # identically or they cannot be compared at all.
+            if enable_thinking is not None:
+                kw["enable_thinking"] = enable_thinking
             try:
-                texts.append(tok.apply_chat_template(msgs, enable_thinking=enable_thinking, **kw))
+                texts.append(tok.apply_chat_template(msgs, **kw))
             except TypeError:
+                kw.pop("enable_thinking", None)
                 texts.append(tok.apply_chat_template(msgs, **kw))
 
         enc = tok(texts, return_tensors="pt", padding=True).to(model.device)
