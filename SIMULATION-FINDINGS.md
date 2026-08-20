@@ -720,6 +720,69 @@ exercise it. Deliberately **not** fixed by adding traces to the corpus: that wou
 
 ---
 
+## F-31 — the lab trained on one prompt and scored on another; **every adapter got 0.000** — **FIXED**
+
+The first end-to-end NB1→NB5 run. All four adapters scored `target=0.000 format=0.000`
+— identical to the **untrained** baseline (a) — while every training loss curve looked
+healthy:
+
+| run | final loss | target | format |
+|---|---|---|---|
+| `correct` | 0.0549 | **0.000** | 0.000 |
+| `attn_only` | **0.0531** | 0.000 | 0.000 |
+| `wrong_lr` | 0.0903 | 0.000 | 0.000 |
+| `qlora` | 0.0670 | 0.000 | 0.000 |
+
+`scripts/diagnose_generation.py` printed the two renders side by side:
+
+```
+TRAINED ON : user: "<full schema + enum list>\n\n<ticket>"   -> JSON     (no system msg)
+EVALUATED  : system: "Phân loại ticket sau."  +  user: "<ticket>"
+```
+
+`to_messages()` folded the entire instruction — the four key names, every enum value,
+*"chỉ trả về JSON"* — into the **user** turn, and emitted no system message at all.
+Evaluation then asked for the same task from a prompt containing none of that, in a role
+structure the model had never seen. So the fine-tune answered the question it was
+*actually* asked — a vague instruction with no schema — in fluent Vietnamese prose:
+
+> `'Dựa trên nội dung của ticket, đây là một yêu cầu liên quan đến quy trình hậu mãi
+> cụ thể. Dưới đây là phân loại chi tiết: * **Loại ticket:** ...'`
+
+**Diagnosed, not guessed.** Latency said it first: 10418 ms/sample against baseline (a)'s
+3215 ms. A model that learned nothing is *fast* and wrong; an off-distribution model is
+*slow* and wrong, because it rambles to the token cap. The diagnostic then separated the
+three candidate explanations — inert adapter (`disable_adapter()` comparison), think-
+scaffold mismatch (`enable_thinking` sweep), failed transfer — and only one survived.
+
+NB5's own comment states the intent correctly:
+
+> *the fine-tune is evaluated WITHOUT the long optimized prompt — that is the point of
+> fine-tuning: the behaviour moved into the weights, so the prompt can shrink*
+
+That ambition is right. The prompt was shrunk at **evaluation** time without ever
+training the shrunk form.
+
+**Fix.** `to_messages(record, system=NAIVE_PROMPT)` now emits the shape evaluation sends:
+short system prompt, bare ticket in the user turn, JSON answer. What the model has to
+internalise is the label space — precisely what fine-tuning is supposed to buy here.
+`system=None` reproduces the old shape so NB1 can show both. `NAIVE_PROMPT` and
+`OPTIMIZED_PROMPT` move to `config.py` and `generate.py` imports them: two copies of a
+prompt shared by training and eval is how this got in.
+
+`data.prompt_alignment()` returns both renders and whether the eval prompt is a **prefix**
+of the training text. NB1 proves the *mask*; this proves what the model **conditions on**.
+
+**A correct mask cannot catch this.** The mask was right the entire time — F-10's proof
+still passes. The lab had a rigorous, verified answer to "is the right span supervised?"
+and no answer at all to "is this the prompt we will actually send?" Both notebooks that
+followed inherited the gap, and the four-group gate dutifully reported FAILED for a
+reason no student could have diagnosed from the artifacts.
+
+**Why nothing caught it sooner:** NB5 had never completed a single run before today.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
