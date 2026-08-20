@@ -9,28 +9,6 @@
 
 ---
 
-## Lab này khác lab Day 21 cũ ở chỗ nào
-
-Lab cũ lấy **quét rank** (`r=8 / 16 / 64`) làm thí nghiệm trung tâm, gắn adapter vào
-`q_proj, v_proj`, và chấm bằng **perplexity**. Deck 2026 gọi đúng ba thứ đó là Lỗi #1,
-#2, #3 (§10.2–§10.4) và nói perplexity một mình không phải bằng chứng (§17).
-
-Lab này **không xoá** thí nghiệm cũ — nó chạy lại thí nghiệm cũ như một **đối chứng có
-kiểm soát** (NB4), để bạn tự tay thấy danh tiếng *"LoRA học kém hơn full fine-tune"*
-xuất hiện rồi biến mất khi cấu hình đúng.
-
-| | Lab cũ (2024-era) | Lab này |
-|---|---|---|
-| Thí nghiệm trung tâm | quét rank r=8/16/64 | **vị trí adapter & thang LR**, ở cùng ngân sách tham số |
-| `target_modules` | `q_proj, v_proj` | **toàn bộ linear của text decoder** (đã loại vision tower) |
-| Lượng tử hoá | QLoRA 4-bit mặc định | **bf16 LoRA** mặc định; 4-bit là một run *để đo* |
-| Chấm điểm | perplexity + 5 ví dụ định tính | **4 nhóm + 3 baseline + cổng hồi quy** |
-| Base model | Llama-3.2-3B / Qwen2.5 | **Qwen3.5** (0.8B → 9B tuỳ tier) |
-| TRL | tiền-1.0 + monkey-patch | **TRL v1.x**, cấu hình tự lọc theo phiên bản |
-| Chủ đề mới | — | reasoning-trace collapse · MoE/hybrid attention · optimizer mismatch |
-
----
-
 ## Hai câu hỏi lab bắt bạn trả lời
 
 1. **Phần được tính loss có đúng là câu trả lời không?** (NB1 — chạy được trên CPU)
@@ -149,16 +127,6 @@ LLM judge, nên không có "điểm cho không":
 Khi đổi: thêm `data/CUSTOM_DATASET.md` mô tả nguồn, kích thước và cách khử nhiễm; nếu
 không, `make verify` sẽ báo FAIL vì checksum tập eval đã đổi. (Đó là chủ ý: sửa tập eval
 sau khi thấy kết quả sẽ làm hỏng toàn bộ phép so sánh.)
-
----
-
-## Ranh giới với các ngày khác
-
-* **Ngày 20 — Model Serving.** NB6 chỉ đi tới `set_adapter()` trên một base đang nạp.
-  vLLM/SGLang, multi-tenant, KV cache là của Ngày 20.
-* **Ngày 22 — DPO/Alignment.** Lab 21 dừng ở SFT. `adapters/correct/` của bạn chính là
-  thứ Lab 22 nhận vào làm checkpoint SFT — giữ lại nó.
-* **Ngày 25 — GPU FinOps.** Ở đây chỉ ghi VRAM và thời gian; kinh tế học GPU là của Ngày 25.
 
 ---
 
