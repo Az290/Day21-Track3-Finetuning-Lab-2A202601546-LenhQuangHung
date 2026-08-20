@@ -95,11 +95,20 @@ make clean        Xoá artefact sinh ra (giữ corpus gốc)
 > với fp16 nhiều khả năng nhanh hơn.* Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** — baseline
 > (a), baseline (b), và bản fine-tune. Đó là cái giá của thiết kế ba-baseline, và nó đáng.
 >
-> **Khi đang lặp, dùng `EVAL_LIMIT`:**
+> **Hai cần gạt khi bạn bị bó thời gian.** Cả hai đều để **mặc định** khi nộp bài;
+> `results/` ghi lại nếu bạn chạy chế độ rút gọn.
+>
 > ```bash
-> EVAL_LIMIT=8 make pipeline     # ~15 ph, đủ để bắt lỗi cấu hình
+> EVAL_LIMIT=8 make pipeline     # ít mẫu eval hơn -> phần SINH ngắn lại
+> EPOCHS=1     make pipeline     # nửa số step -> phần HUẤN LUYỆN ngắn lại
 > ```
-> Bài nộp thì để trống `EVAL_LIMIT` — `results/` có ghi lại nếu bạn chạy chế độ rút gọn.
+>
+> `EPOCHS` áp cho **cả NB3 lẫn NB4** — không thể chỉnh một nửa. Đó là cố ý: ba run đối
+> chứng chỉ có nghĩa khi chúng chạy đúng bằng số step của `correct`, và `make verify`
+> đọc `runs.csv` để kiểm tra điều đó thật sự đã xảy ra.
+>
+> **Nếu NB4 bị đứt giữa chừng, đừng chạy lại từ đầu.** Adapter nào đã lưu thì được bỏ
+> qua; `FORCE_RETRAIN=1` để train lại tất cả, `ONLY=qlora` để train lại đúng một run.
 
 NB1–NB5 là **core**. NB6 là tuỳ chọn (có điểm thưởng).
 
