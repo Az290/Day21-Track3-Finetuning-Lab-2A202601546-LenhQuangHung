@@ -105,7 +105,9 @@ make clean        Xoá artefact sinh ra (giữ corpus gốc)
 | 6 | `06_merge_and_serve` | ~10 ph | ✓ | merge + assert không tụt điểm + hot-swap adapter *(tuỳ chọn)* |
 
 > **Ngân sách thật: ~95–110 phút** cho core trên T4 free (lần đầu cộng thêm ~1,5 ph tải
-> 9,32 GB trọng số). Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** — baseline
+> 9,32 GB trọng số). *Các con số này đo khi T4 còn chạy **bf16 giả lập** — một lỗi đã
+> được sửa sau đó (xem `SIMULATION-FINDINGS.md` F-15). Chúng là **cận trên**; lần đo lại
+> với fp16 nhiều khả năng nhanh hơn.* Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** — baseline
 > (a), baseline (b), và bản fine-tune. Đó là cái giá của thiết kế ba-baseline, và nó đáng.
 >
 > **Khi đang lặp, dùng `EVAL_LIMIT`:**

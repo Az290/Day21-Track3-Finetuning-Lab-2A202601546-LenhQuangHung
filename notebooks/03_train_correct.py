@@ -8,7 +8,22 @@
 # | `target_modules` | **toàn bộ linear của text decoder** | §10.2 |
 # | `learning_rate` | **≈10× LR full-FT** | §10.3 |
 # | batch hiệu dụng | **< 32** | §10.4 |
-# | `packing` + `padding_free` | cùng bật | §13.3 |
+# | `packing` | **tắt** — xem ghi chú | §13.3 |
+# | `padding_free` | chỉ khi có flash-attn **và** batch ≥ 2 | §13.3 |
+#
+# > **Vì sao khác deck §15.** Deck khuyến nghị bật `packing` + `padding_free`. Trên
+# > model mặc định của lab, cả hai đều **không dùng được**, và lab nói thẳng thay vì
+# > bật cờ vô tác dụng:
+# >
+# > * `packing` **tắt** vì ta nạp nhãn đã token hoá sẵn (mask đã kiểm chứng ở NB1).
+# >   Packing nối các mẫu lại và sẽ phá vỡ căn chỉnh nhãn. *Tính đúng của mask quan
+# >   trọng hơn thông lượng.*
+# > * `padding_free` cần kernel **FlashAttention**, mà FA-2 đòi **Ampere (sm_80+)** —
+# >   T4 là Turing, không bao giờ có. Và với `batch=1` thì cũng chẳng có padding nào
+# >   để bỏ. Xem `labkit/device.py`.
+# >
+# > Tinh thần §13.3 vẫn đúng: *tăng tốc chỉ miễn phí khi ranh giới chuỗi được tôn
+# > trọng.* Ở đây điều kiện đó không thoả, nên ta không bật.
 # | `loss_type` | `chunked_nll` | §15 |
 # | `alpha` | `2r` | §9.3 |
 
