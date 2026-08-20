@@ -60,7 +60,7 @@ make setup-cpu && make smoke && make nb1
 
 # Có GPU — cài torch cho CUDA của bạn TRƯỚC (xem đầu requirements.txt), rồi:
 make setup && make smoke
-make pipeline        # NB1 -> NB5, ~95-110 phút trên T4 (đo thật)
+make pipeline        # NB1 -> NB5, ~100-130 phút trên T4 (đo thật, xem docs/)
 make verify          # cổng kiểm tra trước khi nộp
 ```
 

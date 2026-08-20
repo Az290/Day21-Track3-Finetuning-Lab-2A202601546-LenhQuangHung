@@ -22,13 +22,18 @@ Sau lab này, học viên có thể:
 
 | Bước | Notebook | Thời gian | Output bắt buộc |
 |---|---|---|---|
-| 1 | `01_data_and_mask` | 15 ph | `results/mask_proof.json`, `template_check.json`, `token_stats.json` |
-| 2 | `02_baselines` | 15 ph | `results/baselines_frozen.json` |
-| 3 | `03_train_correct` | 25 ph | `adapters/correct/`, dòng `correct` trong `results/runs.csv` |
-| 4 | `04_misconfig_autopsy` | 35 ph | 3 dòng đối chứng trong `runs.csv` |
-| 5 | `05_evaluate_and_verdict` | 15 ph | `results/verdict.json`, `qualitative.json` |
+| 1 | `01_data_and_mask` | ~1 ph | `results/mask_proof.json`, `template_check.json`, `token_stats.json` |
+| 2 | `02_baselines` | 17–23 ph | `results/baselines_frozen.json` |
+| 3 | `03_train_correct` | 15–25 ph | `adapters/correct/`, dòng `correct` trong `results/runs.csv` |
+| 4 | `04_misconfig_autopsy` | **45–60 ph** | 3 dòng đối chứng trong `runs.csv` |
+| 5 | `05_evaluate_and_verdict` | ~21 ph | `results/verdict.json`, `autopsy.json`, `qualitative.json` |
 | 6 | `06_merge_and_serve` *(tuỳ chọn)* | 10 ph | `results/merge_check.json` |
 | 7 | Viết report | 30 ph | `submission/REPORT.md` |
+
+> Đo thật trên T4 free 2026-08-20 (`docs/MEASURED-T4-2026-08-20.md`). Là **khoảng**, không
+> phải một con số: cùng cấu hình 30 step chạy 1456 s rồi 1021 s trên đúng mã đó. Core
+> NB1–NB5 ≈ **100–130 ph**. Hết giờ thì `EPOCHS=1` (giảm nửa NB3 **và** NB4) hoặc
+> `EVAL_LIMIT=8`; nộp bài thì để mặc định.
 
 ---
 
