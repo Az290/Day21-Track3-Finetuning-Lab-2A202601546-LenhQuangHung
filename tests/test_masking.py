@@ -189,3 +189,37 @@ def test_empty_think_block_is_excluded_by_masked_think():
     assert "</think>" in data.decode_supervised(tok, plain)
     assert "</think>" not in data.decode_supervised(tok, masked)
     assert ANSWER in data.decode_supervised(tok, masked)
+
+
+# --- pre-tokenized training set (F-10 fix) ----------------------------------
+
+def test_to_training_dataset_shape_and_mask():
+    tok = FakeTokenizer()
+    rows = data.to_training_dataset(
+        tok, [{"instruction": QUESTION, "input": "", "output": ANSWER}] * 3,
+        max_length=512)
+    assert len(rows) == 3
+    for r in rows:
+        assert set(r) == {"input_ids", "labels", "attention_mask"}
+        assert len(r["input_ids"]) == len(r["labels"]) == len(r["attention_mask"])
+        sup = sum(1 for x in r["labels"] if x != data.IGNORE_INDEX)
+        assert 0 < sup < len(r["labels"]), "must supervise some but not all tokens"
+
+
+def test_to_training_dataset_keeps_only_rows_that_teach_something():
+    """Every returned row must supervise at least one token — silently training on
+    all-masked rows is how a run produces a loss curve that means nothing."""
+    tok = FakeTokenizer()
+    rows = data.to_training_dataset(
+        tok, [{"instruction": QUESTION, "input": "", "output": ANSWER}] * 4,
+        max_length=512)
+    assert len(rows) == 4
+    assert all(any(x != data.IGNORE_INDEX for x in r["labels"]) for r in rows)
+
+
+def test_to_training_dataset_raises_if_nothing_is_supervised():
+    tok = FakeTokenizer()
+    with pytest.raises(RuntimeError, match="zero supervised tokens"):
+        data.to_training_dataset(
+            tok, [{"instruction": QUESTION, "input": "", "output": ANSWER}],
+            max_length=6)

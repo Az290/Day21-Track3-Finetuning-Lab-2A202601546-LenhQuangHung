@@ -37,7 +37,10 @@ def load_jsonl(p):
     return [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
 
 train_rows = load_jsonl(ROOT / "data" / "split" / "train.jsonl")
-train_ds = Dataset.from_list([{"messages": data.to_messages(r)} for r in train_rows])
+# Same pre-tokenized, NB1-verified mask as NB3 — the contrasts must differ only in the
+# variable under test, and that includes using an identical loss mask.
+_tok_for_data = None      # filled on first model load below
+train_ds = None
 
 # %% [markdown]
 # ## 1. Bảng vị trí × rank × số tham số
@@ -61,7 +64,13 @@ from trl import SFTConfig, SFTTrainer
 
 def run_contrast(key: str) -> dict:
     spec = SPECS[key]
+    global train_ds
     model, tok = generate.load_base(TIER, load_in_4bit=spec.load_in_4bit)
+    if train_ds is None:
+        train_ds = Dataset.from_list(
+            data.to_training_dataset(tok, train_rows, max_length=TIER.max_length,
+                                     mask_mode=os.environ.get("MASK_MODE", "assistant-only")))
+        print("  train_ds:", train_ds)
     targets = modeling.resolve_target_modules(model, spec.target)
 
     if spec.r is None:                       # attn_only: solve for the matched rank

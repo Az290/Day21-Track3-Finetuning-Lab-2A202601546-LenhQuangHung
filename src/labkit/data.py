@@ -269,6 +269,46 @@ def to_messages(record: dict) -> list[dict]:
     ]
 
 
+def to_training_dataset(
+    tokenizer,
+    records: list[dict],
+    max_length: int = 1024,
+    mask_mode: str = "assistant-only",
+    enable_thinking: bool | None = None,
+) -> list[dict]:
+    """Pre-tokenize records into {input_ids, labels} using the mask NB1 verified.
+
+    **Why pre-tokenize instead of letting TRL do it.** TRL's `assistant_only_loss`
+    derives its mask from `{% generation %}` markers in the chat template. Qwen3.5's
+    template has none, so that flag yields a mask of ZERO supervised tokens — and
+    transformers only *warns*. Training runs to completion and the numbers are
+    meaningless. Run `scripts/check_mask_agreement.py` to see it on your own base model.
+
+    Training on the output of `build_example()` means the loss covers exactly the tokens
+    the student decoded and asserted on in NB1. No flag in between to be wrong.
+
+    Trade-off: pre-tokenized labels cannot be `packing`-ed (packing concatenates
+    examples and would invalidate the label alignment). Correctness of the mask outranks
+    the throughput here.
+    """
+    out: list[dict] = []
+    for r in records:
+        ex = build_example(
+            tokenizer, to_messages(r), max_length=max_length,
+            mask_mode=mask_mode, enable_thinking=enable_thinking,
+        )
+        if ex.n_supervised == 0:
+            continue                       # nothing to learn from; drop it
+        out.append({"input_ids": ex.input_ids, "labels": ex.labels,
+                    "attention_mask": [1] * len(ex.input_ids)})
+    if not out:
+        raise RuntimeError(
+            "every example ended up with zero supervised tokens — the mask is wrong. "
+            "Re-run NB1 and read results/mask_proof.json before training."
+        )
+    return out
+
+
 def split(records: list, train_frac: float = 0.9, seed: int = 42) -> tuple[list, list]:
     """Deterministic split. Same seed in every notebook so runs stay comparable."""
     import random

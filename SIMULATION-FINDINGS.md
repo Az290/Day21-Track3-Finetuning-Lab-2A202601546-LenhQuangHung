@@ -152,12 +152,68 @@ README claims NB2 ≈ 10 min and the core ≈ 80 min on a T4. Measured on free C
 | NB1 | 2 min | **26 s** ✅ |
 | model download (first run only) | not mentioned | **~70 s** for 9.32 GB |
 | weight load | not mentioned | ~30 s |
-| NB2 baseline (a) alone | — | **>15 min and still running** |
+| NB2 baseline (a) alone | — | **>15 min** (pre-fp16) |
 
-Two compounding causes: 50 target + 15 regression prompts get generated **twice** (once
-per baseline), and until F-07 the T4 was running **emulated bf16** because the config
-hardcoded it. Re-measure after the fp16 fix before rewriting the numbers — but the
-current README figures should not be trusted.
+**Measured after the fp16 fix**, from the new progress output:
+
+```
+[(a) base + naive prompt/target] batch 1/13    44s elapsed  ~523s left
+[(a) base + naive prompt/target] batch 2/13    88s elapsed  ~483s left
+```
+
+**44 s per batch of 4 prompts ≈ 11 s/prompt** at `max_new_tokens=160`, 4B on a T4.
+Extrapolating:
+
+| Stage | README claim | Projected from measurement |
+|---|---|---|
+| NB1 | 2 min | **14–26 s** ✅ |
+| NB2 (two baselines × 65 prompts) | 10 min | **≈ 23 min** |
+| NB5 (one scoring pass) | 10 min | **≈ 12 min** |
+| **core NB1–NB5** | **80 min** | **≈ 95–110 min** |
+
+The structural cause is that the eval set is generated **three times** across the lab
+(baseline a, baseline b, fine-tune). That is inherent to the three-baseline design and
+is the right trade — but the README must say so, and `EVAL_LIMIT` should be presented
+as the normal way to iterate rather than a hidden knob.
+
+---
+
+## F-10 — `assistant_only_loss=True` supervises **ZERO tokens** on the default model — **CRITICAL**
+
+The single most damaging finding, and a **silent** one.
+
+NB3 configured `assistant_only_loss=True` and handed training to TRL. TRL derives that
+mask from `{% generation %}` markers in the chat template. **Qwen3.5's template has
+none.** Result, measured by `scripts/check_mask_agreement.py`:
+
+```
+chat template exposes {% generation %} markers: False
+labkit assistant-only : 11/31 tokens (35.5%)   '</think>\n\n{"intent": "doi_tra"}<|im_end|>\n'
+TRL  assistant_masks  :  0/31 tokens ( 0.0%)   ''
+VERDICT: FAIL — TRL would supervise NOTHING.
+```
+
+transformers emits a **warning, not an error**. Training completes. A loss curve is
+drawn. The numbers are meaningless.
+
+This is precisely the class of bug the deck spends §13.2 and §16 on — *"no error, a
+plausible loss curve, and a broken model"* — reproduced by the lab's own default
+configuration. NB1 proves the mask is correct and then NB3 threw that proof away and
+trusted a library flag.
+
+**Fix.** Stop trusting the flag. NB3 now trains on the **exact mask NB1 verified**:
+`data.to_training_dataset()` pre-tokenizes with `build_example()`, so `input_ids` and
+`labels` are the ones the student decoded and asserted on. `assistant_only_loss` is not
+set at all.
+
+Consequence, stated honestly on the slide-facing side: pre-tokenized labels are
+incompatible with `packing`, so packing is off for this path. Deck §13.3's point
+(packing is free only when boundaries are respected) still stands — here the *mask's
+correctness* outranks the throughput, and the lab says so rather than quietly keeping a
+flag that does nothing.
+
+`scripts/check_mask_agreement.py` ships with the lab so students can run this check
+against any base model they swap in.
 
 ---
 

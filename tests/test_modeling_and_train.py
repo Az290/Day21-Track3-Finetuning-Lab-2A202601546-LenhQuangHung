@@ -129,9 +129,17 @@ def test_sft_kwargs_use_the_post_v1_names():
     kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "out")
     assert "max_length" in kw and "max_seq_length" not in kw
     assert "eval_strategy" not in kw or "evaluation_strategy" not in kw
-    assert kw["padding_free"] is True and kw["packing"] is True
+    assert kw["padding_free"] is True
     assert kw["loss_type"] == "chunked_nll"
-    assert kw["assistant_only_loss"] is True
+
+
+def test_assistant_only_loss_is_never_set():
+    """Regression (F-10): TRL's assistant_only_loss silently supervises ZERO tokens on
+    templates without {% generation %} markers, which includes Qwen3.5. The lab
+    pre-tokenizes with its own verified mask instead."""
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "out")
+    assert "assistant_only_loss" not in kw
+    assert kw["packing"] is False, "pre-tokenized labels are incompatible with packing"
 
 
 # --- precision must follow the device, not the fashion -----------------------
@@ -203,6 +211,8 @@ def test_lora_kwargs_keep_the_alpha_equals_2r_invariant():
     assert kw["r"] == 90 and kw["lora_alpha"] == 180
 
 
-def test_everything_mask_mode_disables_completion_only():
-    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", mask_mode="everything")
-    assert kw["completion_only_loss"] is False and "assistant_only_loss" not in kw
+def test_mask_mode_does_not_leak_into_trl_flags():
+    """mask_mode is applied when pre-tokenizing, not via a TRL flag."""
+    for mode in ("assistant-only", "everything", "response-only"):
+        kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", mask_mode=mode)
+        assert "assistant_only_loss" not in kw and "completion_only_loss" not in kw

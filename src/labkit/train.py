@@ -11,8 +11,9 @@ The defaults encode the deck:
   * `target_modules` = text-decoder linear layers (§10.2, corrected for the vision tower)
   * `learning_rate`  = ~10x the full-FT scale (§10.3)
   * effective batch  < 32 (§10.4)
-  * `packing` + `padding_free` together (§13.3 — packing is only free when sequence
-    boundaries are respected)
+  * the loss mask comes from `labkit.data.to_training_dataset()`, NOT from TRL's
+    `assistant_only_loss` — that flag silently supervises nothing on templates without
+    `{% generation %}` markers, which includes Qwen3.5 (see check_mask_agreement.py)
   * `loss_type="chunked_nll"` (TRL >= 1.7 default; ~30-50% less VRAM)
 """
 from __future__ import annotations
@@ -91,8 +92,8 @@ def sft_config_kwargs(
         save_strategy="no",
         report_to="none",
         seed=seed,
-        packing=True,
-        padding_free=True,                        # §13.3: packing is safe only with this
+        packing=False,       # we supply pre-tokenized labels -- see the note below
+        padding_free=True,
         loss_type="chunked_nll",                  # TRL >= 1.7 default; big VRAM saving
         gradient_checkpointing=True,
     )
@@ -103,11 +104,13 @@ def sft_config_kwargs(
     kw["bf16"] = prec == "bf16"
     kw["fp16"] = prec == "fp16"
 
-    # Only one of these should ever be set; assistant_only_loss is the multi-turn form.
-    if mask_mode == "everything":
-        kw["completion_only_loss"] = False
-    else:
-        kw["assistant_only_loss"] = True
+    # NOTE — deliberately NOT setting `assistant_only_loss`.
+    # TRL derives that mask from `{% generation %}` markers in the chat template, and
+    # Qwen3.5's template has none: the flag produces a mask of ZERO supervised tokens
+    # while emitting only a warning. See scripts/check_mask_agreement.py.
+    # Instead the dataset is pre-tokenized by labkit.data.to_training_dataset(), so the
+    # loss covers exactly the mask verified in NB1. That also forces packing off:
+    # packing concatenates examples and would invalidate the label alignment.
     if max_steps is not None:
         kw["max_steps"] = max_steps
     return kw

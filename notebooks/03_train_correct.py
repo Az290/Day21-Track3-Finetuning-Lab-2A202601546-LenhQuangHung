@@ -68,12 +68,20 @@ def load_jsonl(p):
 train_rows = load_jsonl(split_dir / "train.jsonl")
 MASK_MODE = os.environ.get("MASK_MODE", "assistant-only")
 
-def to_chat(r):
-    return {"messages": data.to_messages(r)}
-
-train_ds = Dataset.from_list([to_chat(r) for r in train_rows])
+# Train on the mask you PROVED in NB1 — not on a library flag.
+#
+# TRL's `assistant_only_loss` builds its mask from `{% generation %}` markers in the
+# chat template. Qwen3.5 has none, so that flag supervises ZERO tokens while emitting
+# only a warning: training completes, the loss curve looks fine, the run is worthless.
+# Check it yourself:  python scripts/check_mask_agreement.py
+rows = data.to_training_dataset(tok, train_rows, max_length=TIER.max_length,
+                                mask_mode=MASK_MODE)
+train_ds = Dataset.from_list(rows)
+sup = sum(sum(1 for x in r["labels"] if x != data.IGNORE_INDEX) for r in rows)
+tot = sum(len(r["labels"]) for r in rows)
 print(train_ds)
-print("mask_mode =", MASK_MODE)
+print(f"mask_mode = {MASK_MODE}   supervised {sup}/{tot} tokens ({sup/tot:.1%})")
+assert 0 < sup < tot, "mask covers nothing or everything — stop and re-run NB1"
 
 # %% [markdown]
 # ## 4. Cấu hình — lọc theo phiên bản TRL đang cài
