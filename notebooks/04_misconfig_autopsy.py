@@ -134,10 +134,30 @@ cols = ["run", "label", "r", "trainable_params", "learning_rate", "final_loss",
 print(report.markdown_table(rows, cols))
 
 # %% [markdown]
+# ### ⚠ `final_loss` ở đây là LOSS HUẤN LUYỆN — đừng xếp hạng bằng nó
+#
+# Cột này rẻ (có sẵn từ lúc train) và **không phải** thang đo dùng để kết luận. Chính
+# lab này gọi "chấm bằng chỉ số thay thế thay vì bằng năng lực trên tác vụ" là **Lỗi
+# #3** — nếu bạn xếp hạng bốn run bằng `final_loss`, bạn đang mắc đúng lỗi đó.
+#
+# Với 225 mẫu và 30 step, một adapter r=283 có thể ép loss huấn luyện **thấp hơn**
+# `correct` mà vẫn tệ hơn trên tập target. Loss thấp có thể chỉ là ghi nhớ.
+#
+# > **NB5 §4 chấm cả ba adapter này trên tập target** — cùng thang đo đã dùng cho
+# > `correct`. Đó mới là bảng để trả lời ba câu dưới đây. Nếu thứ tự của hai bảng khác
+# > nhau, hãy nói thẳng điều đó trong REPORT.md: bạn vừa đo được lý do lab cũ kết luận sai.
+#
+# **Về `grad_norm: nan` ở dòng log đầu tiên:** đó là `GradScaler` của fp16 đang dò thang
+# — vài step đầu tràn số và bị bỏ qua, đúng theo thiết kế. Bình thường. Cái *không*
+# bình thường là `nan` kéo dài suốt run: khi đó run đã chết và loss cuối vô nghĩa.
+
+# %% [markdown]
 # ## 4. Câu hỏi phải trả lời trong REPORT.md
 #
-# 1. `attn_only` có **cùng số tham số huấn luyện** với `correct`. Nó thắng hay thua? Điều
-#    đó nói gì về *rank* so với *vị trí gắn adapter*?
+# Trả lời bằng bảng **NB5 §4** (điểm target), rồi đối chiếu với `final_loss` ở trên.
+#
+# 1. `attn_only` có **cùng số tham số huấn luyện** với `correct`. Trên tập target nó
+#    thắng, thua, hay hoà? Điều đó nói gì về *rank* so với *vị trí gắn adapter*?
 # 2. `wrong_lr` chỉ khác đúng một con số. Đường loss khác nhau bao nhiêu? Nếu chỉ nhìn
 #    loss mà không biết LR, bạn sẽ kết luận gì — và kết luận đó có đúng không?
 # 3. `qlora` tiết kiệm bao nhiêu VRAM, và **trả giá bằng gì**? Nhà cung cấp khuyến nghị

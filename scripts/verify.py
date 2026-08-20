@@ -99,6 +99,8 @@ REQUIRED_ARTIFACTS = {
     "results/baselines_frozen.json": "NB2 — the three-baseline table, frozen",
     "results/runs.csv": "NB3/NB4 — one row per training run",
     "results/verdict.json": "NB5 — the regression-gate verdict",
+    "results/autopsy.json": "NB5 §4 — the NB4 contrasts scored on the TARGET task, "
+                            "which is what settles whether a misconfiguration lost",
     "submission/REPORT.md": "your evaluation report",
 }
 

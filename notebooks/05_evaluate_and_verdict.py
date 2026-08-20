@@ -51,20 +51,33 @@ print("baseline (b) target =", round(base_b.target, 3), "— đây là mốc ph�
 from peft import PeftModel
 
 
-def score_adapter(adapter_dir: pathlib.Path, system_prompt: str | None) -> tuple:
-    model, tok = generate.load_base(TIER)
+def score_adapter(adapter_dir: pathlib.Path, system_prompt: str | None, *,
+                  load_in_4bit: bool = False, with_regression: bool = True,
+                  label: str = "ft") -> tuple:
+    """Score one adapter on the target group (+ format + latency), regression optional.
+
+    `load_in_4bit` must match how the adapter was TRAINED. The `qlora` contrast learned
+    against a 4-bit base; scoring it on the fp16 base measures a base/adapter mismatch
+    and calls the result "what QLoRA costs you". Take the flag from the run's own spec,
+    never from the default.
+    """
+    model, tok = generate.load_base(TIER, load_in_4bit=load_in_4bit)
     model = PeftModel.from_pretrained(model, str(adapter_dir))
     model.eval()
 
     preds, lat = generate.generate_batch(
-        model, tok, [r["input"] for r in target], system=system_prompt, label="ft/target")
+        model, tok, [r["input"] for r in target], system=system_prompt, label=f"{label}/target")
     tgt = sum(ev.triage_field_accuracy(p, r["label"]) for p, r in zip(preds, target)) / len(target)
     fmt = sum(ev.has_required_keys(p, ev.TRIAGE_KEYS) for p in preds) / len(preds)
 
-    rpreds, _ = generate.generate_batch(
-        model, tok, [r["instruction"] for r in regression], system=None, max_new_tokens=96,
-        label="ft/regression")
-    reg = sum(ev.keyword_recall(p, r["keywords"]) for p, r in zip(rpreds, regression)) / len(regression)
+    # The contrasts are scored on target/format only: the graded 4-group verdict is about
+    # `correct`, and the regression pass is a second full generation sweep per adapter.
+    rpreds, reg = [], 0.0
+    if with_regression:
+        rpreds, _ = generate.generate_batch(
+            model, tok, [r["instruction"] for r in regression], system=None, max_new_tokens=96,
+            label=f"{label}/regression")
+        reg = sum(ev.keyword_recall(p, r["keywords"]) for p, r in zip(rpreds, regression)) / len(regression)
 
     # Deck §13.5 — reasoning-trace collapse. Only meaningful if the base has a thinking
     # mode AND you trained on traces; scored anyway so the number is on the record.
@@ -122,7 +135,52 @@ report.write_json(
 # 4. Cả ba đều ổn nhưng vẫn thua (b) → prompt engineering đã thắng. Đó là một kết quả.
 
 # %% [markdown]
-# ## 4. Định tính — bắt buộc có cả ca THUA
+# ## 4. Giải phẫu NB4 — chấm ba cấu hình sai trên CÙNG thang đo
+#
+# NB4 in ra `final_loss`. Đó là **loss huấn luyện** — và toàn bộ lab này lấy việc "chấm
+# bằng chỉ số thay thế thay vì bằng năng lực trên tác vụ" làm **Lỗi #3**. Một adapter
+# hoàn toàn có thể ép loss huấn luyện xuống thấp hơn `correct` mà vẫn **tệ hơn** trên
+# tập target: 225 mẫu, 30 step, LoRA r=283 — loss thấp có thể chỉ là ghi nhớ.
+#
+# Nên câu "cấu hình sai có thua không?" phải được trả lời ở đây, bằng **cùng thang đo
+# đã dùng cho `correct`**, chứ không phải bằng cột `final_loss` của NB4.
+#
+# > **Đừng đoán trước kết quả.** `attn_only` có *cùng ngân sách tham số*; trên một tác
+# > vụ hẹp như triage JSON, nó có thể hoà — hoặc thắng. Đó vẫn là một kết quả đúng và
+# > được chấm điểm đầy đủ. Điều bị trừ điểm là báo cáo một thứ tự mà số đo không ủng hộ.
+
+# %%
+from labkit.config import CONTRAST_KEYS, SPECS
+
+autopsy = [{"run": "correct", "target": round(scores_ft.target, 4),
+            "format": round(scores_ft.format, 4),
+            "latency_ms": round(scores_ft.latency_ms, 1), "n": scores_ft.n}]
+
+for key in CONTRAST_KEYS:
+    adir = ROOT / "adapters" / key
+    if not adir.exists():
+        print(f"skip {key}: {adir} chưa có — chạy NB4 trước")
+        continue
+    s_k, _, _ = score_adapter(adir, generate.NAIVE_PROMPT,
+                              load_in_4bit=SPECS[key].load_in_4bit,
+                              with_regression=False, label=key)
+    autopsy.append({"run": key, "target": round(s_k.target, 4),
+                    "format": round(s_k.format, 4),
+                    "latency_ms": round(s_k.latency_ms, 1), "n": s_k.n})
+    print(f"{key}: target={s_k.target:.3f}  format={s_k.format:.3f}")
+
+print()
+print(report.markdown_table(autopsy, ["run", "target", "format", "latency_ms", "n"]))
+report.write_json(autopsy, "autopsy.json", results_dir=ROOT / "results")
+
+# %% [markdown]
+# ### Bảng này mới là câu trả lời cho ba câu hỏi ở cuối NB4
+#
+# Đặt nó cạnh cột `final_loss` của NB4. Nếu thứ tự hai bảng **khác nhau**, bạn vừa tự
+# tay đo được lý do lab cũ kết luận sai: nó dừng lại ở chỉ số thay thế.
+
+# %% [markdown]
+# ## 5. Định tính — bắt buộc có cả ca THUA
 #
 # Chọn 5 ví dụ: ≥2 ca fine-tune thắng, **≥2 ca fine-tune thua**. Chỉ chọn ca thắng là
 # cherry-pick và bị trừ điểm ở mục Evaluation Quality.
@@ -143,5 +201,6 @@ report.write_json(rows, "qualitative.json", results_dir=ROOT / "results")
 # %% [markdown]
 # ## ✅ Checkpoint NB5
 # - [ ] `results/verdict.json` — có phán quyết pass/fail
+# - [ ] `results/autopsy.json` — ba cấu hình sai đã được chấm trên thang đo tác vụ
 # - [ ] Bảng ba baseline đã đủ
 # - [ ] `results/qualitative.json` — có cả ca thắng lẫn ca thua

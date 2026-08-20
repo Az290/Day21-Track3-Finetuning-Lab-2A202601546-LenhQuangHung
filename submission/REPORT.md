@@ -53,17 +53,22 @@ Bạn có sửa `OPTIMIZED_PROMPT` không? Nếu có: **làm mạnh lên hay y�
 
 ## 4. Giải phẫu cấu hình sai (NB4)
 
-| Run | vị trí | r | trainable | LR | final loss | s | VRAM GB |
-|---|---|---|---|---|---|---|---|
-| `correct` | text-linear | 16 | | | | | |
-| `attn_only` | q,v | *(matched)* | | | | | |
-| `wrong_lr` | text-linear | 16 | | | | | |
-| `qlora` | text-linear | 16 | | | | | |
+| Run | vị trí | r | trainable | LR | train loss (NB4) | **target (NB5 §4)** | s | VRAM GB |
+|---|---|---|---|---|---|---|---|---|
+| `correct` | text-linear | 16 | | | | | | |
+| `attn_only` | q,v | *(matched)* | | | | | | |
+| `wrong_lr` | text-linear | 16 | | | | | | |
+| `qlora` | text-linear | 16 | | | | | | |
+
+> Xếp hạng bằng cột **target**, không bằng cột train loss — chấm bằng chỉ số thay thế
+> chính là Lỗi #3. Nếu hai cột cho hai thứ tự khác nhau, nói thẳng điều đó ở 4.1: đó là
+> kết quả đáng giá nhất bạn đo được trong lab này.
 
 Trả lời ba câu (mỗi câu ≥3 câu văn):
 
-**4.1 — `attn_only` có cùng số tham số huấn luyện với `correct`. Nó thắng hay thua? Điều
-đó nói gì về *rank* so với *vị trí gắn adapter*?**
+**4.1 — `attn_only` có cùng số tham số huấn luyện với `correct`. Trên tập target nó
+thắng, thua, hay hoà? Thứ tự đó có giống thứ tự theo train loss không? Điều đó nói gì về
+*rank* so với *vị trí gắn adapter*?**
 
 **4.2 — `wrong_lr` chỉ khác đúng một con số. Đường loss khác nhau ra sao? Nếu chỉ nhìn
 loss mà không biết LR, bạn sẽ kết luận sai điều gì?**

@@ -80,3 +80,36 @@ def test_bootstraps_install_from_requirements_not_a_copied_list():
         # a copied list re-pins packages inline; that is exactly the drift F-20 fixed
         inline = re.findall(r'"(transformers|trl|peft|accelerate|datasets|torchao)>=', src)
         assert not inline, f"{name} re-pins {sorted(set(inline))} inline — drift risk"
+
+
+# --- F-22: the autopsy must be settled on the task metric, not on train loss ---------
+
+NB4 = ROOT / "notebooks" / "04_misconfig_autopsy.py"
+NB5 = ROOT / "notebooks" / "05_evaluate_and_verdict.py"
+
+
+def test_nb5_scores_every_contrast_adapter():
+    """NB4 trains three misconfigured adapters, saves them, and reports `final_loss` --
+    a TRAINING loss. The lab names exactly that substitution "Lỗi #3". Until this fix,
+    nothing ever scored those adapters on the target task, so NB4's question "did the
+    mistake lose?" was answered by the proxy metric the lab warns against."""
+    src = NB5.read_text(encoding="utf-8")
+    assert "CONTRAST_KEYS" in src, "NB5 must iterate the contrast runs, not just `correct`"
+    assert "autopsy.json" in src, "the per-adapter task scores must be written to an artifact"
+
+
+def test_contrast_adapters_are_scored_at_their_training_precision():
+    """`qlora` learned against a 4-bit base. Scoring it on the fp16 base measures a
+    base/adapter mismatch and labels the damage 'what QLoRA costs you'."""
+    src = NB5.read_text(encoding="utf-8")
+    assert "load_in_4bit=SPECS[key].load_in_4bit" in src, (
+        "take the 4-bit flag from the run's own spec, never from score_adapter's default")
+
+
+def test_nb4_does_not_present_train_loss_as_the_verdict():
+    """The column can stay -- it is free and it is interesting. It just may not be the
+    thing the student ranks the four runs by."""
+    src = NB4.read_text(encoding="utf-8")
+    assert "final_loss" in src
+    assert "LOSS HUẤN LUYỆN" in src, "the column must be labelled as a training loss"
+    assert "NB5" in src, "NB4 must point at the notebook that actually settles the ranking"

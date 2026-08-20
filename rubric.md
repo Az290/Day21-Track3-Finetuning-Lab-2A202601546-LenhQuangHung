@@ -58,9 +58,10 @@ Sau lab này, học viên có thể:
 | | Điểm | Yêu cầu |
 |---|---|---|
 | 2.1 | 10 | Run `attn_only` dùng **rank đã khớp ngân sách tham số** (sai lệch < 5% so với `correct`). `make verify` kiểm tra tự động. |
-| 2.2 | 5 | Cả 3 run đối chứng dùng **cùng `max_steps`** |
+| 2.2 | 5 | Cả **bốn** run (kể cả `correct`) dùng **cùng `max_steps`** — `make verify` đọc `runs.csv` và kiểm tra tự động |
 | 2.3 | 5 | Mỗi run chỉ đổi **một** biến; nêu rõ biến đó trong report |
 | 2.4 | 5 | Có phân tích *vị trí vs rank*: điều gì thực sự là đòn bẩy, và bằng chứng nào |
+| 2.5 | 0 | *(không tính điểm riêng, nhưng chấm sai ở đây kéo tụt 2.4 và mục 3)* Xếp hạng bốn run bằng **điểm target ở NB5 §4**, không bằng `final_loss` của NB4 |
 
 > **Đây là mục dễ mất điểm nhất.** So `q,v @ r=16` với `all-linear @ r=16` là so *ngân
 > sách*, không phải so *vị trí* — và không chứng minh được gì. Dùng `matched_rank()`.
