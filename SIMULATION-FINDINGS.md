@@ -367,4 +367,48 @@ a library saying *yes* to something it is not really doing.
 | NB1 end-to-end, real 4B tokenizer | local | ✅ 39/188 supervised, both asserts green |
 | Unit tests | both | ✅ 63 passed |
 | `requirements.txt` resolution | local (py3.14) | ✅ dry-run clean |
-| `verify.py` smoke + full | local | ✅ correctly separates done from not-done |
+| `verify.py` smoke + full | **Colab T4** | ✅ incl. integrity checks on real artifacts: `baseline (b) beats (a) 0.000 -> 0.760`, prompt SHA unmodified, eval checksums intact, unfilled REPORT template correctly FAILED |
+| **NB2 end-to-end, real 4B on T4** | Colab T4 | ✅ **1006 s**, `baselines_frozen.json` written |
+| **NB3 config + dataset build** | Colab T4 | ✅ 12 target modules resolved, 32.46 M trainable, matched rank r=283 (budgets within 0.03%), 225 rows, **9014/42101 tokens supervised (21.4%)**, assert passed |
+| **NB3 training started** | Colab T4 | ✅ **30 steps, 48 s/step** — reached `1/30 [00:48<23:18]` before the browser extension disconnected |
+
+---
+
+## Measured results (free Colab T4, `unsloth/Qwen3.5-4B`, full 50-item eval)
+
+| Run | target | regression | format | latency |
+|---|---|---|---|---|
+| **(a)** base + naive prompt | 0.000 | 0.724 | 0.000 | 11331 ms |
+| **(b)** base + optimized prompt | **0.760** | 0.724 | **1.000** | **3775 ms** |
+| (c) LoRA fine-tune | *not reached* | | | |
+
+**The lab's central design validated itself empirically.** Baseline (b) is a genuinely
+hard bar — 0.760 target with perfect JSON compliance and 3× lower latency than (a).
+A fine-tune has to beat *that*, which is exactly the discipline deck §17 argues for and
+the opposite of the old lab's perplexity-vs-nothing comparison.
+
+Deck §6.4 also became a lab artifact: NB3 printed the real model's
+`layer_types: {linear_attention: 24, full_attention: 8}` — the 3:1 hybrid interleave,
+read off the checkpoint the student is fine-tuning.
+
+---
+
+## Not verified
+
+The browser extension disconnected mid-training, so these remain **unrun**:
+
+* **NB3 completion** — it was training (30 steps, 48 s/step, ~23 min ETA) with the
+  post-fix configuration when the connection dropped. Everything up to and including
+  the first optimizer step is verified.
+* **NB4** (three contrast runs) and **NB5** (verdict) — never reached.
+* The **fp16** path end-to-end: NB3's observed run used *emulated* bf16 because of
+  F-15, which was fixed after that run started. The fix is unit-tested but has not
+  itself been exercised on a T4.
+
+**To resume** (the Colab runtime and `results/` survive; artifacts are on disk there):
+
+```
+!pip install -q "torchao>=0.16" && git pull -q && python scripts/colab_run.py nb3 nb4 nb5
+```
+
+Nothing in the resume depends on this machine — the repo has every fix.
