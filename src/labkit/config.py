@@ -155,7 +155,14 @@ SPECS: dict[str, LoraSpec] = {
 
 CONTRAST_KEYS = ["attn_only", "wrong_lr", "qlora"]
 
-# Fixed step budget for NB4. Every contrast run gets the SAME number of optimizer
-# steps as the NB3 baseline slice, otherwise the comparison measures wall-clock, not
-# configuration.
-CONTRAST_MAX_STEPS = 60
+# NB4's contrasts must run the SAME number of optimizer steps as NB3's `correct` run,
+# otherwise the autopsy measures step budget instead of configuration. NB3 spends an
+# EPOCH budget, so its step count falls out of tier + dataset size and cannot be a
+# constant here -- NB4 derives it with `train.planned_steps(len(train_ds), TIER,
+# CONTRAST_EPOCHS)`.
+#
+# This WAS a constant (60), calibrated against a "~10 minutes" estimate. Measured on a
+# free-Colab T4 at 48.5 s/step that is 48 minutes per contrast -- and 2x the 30 steps
+# NB3 actually runs, so every contrast was being trained twice as long as the baseline
+# it is compared against.
+CONTRAST_EPOCHS = 2.0

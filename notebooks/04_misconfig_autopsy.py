@@ -26,7 +26,7 @@ sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
 sys.path.insert(0, str(pathlib.Path.cwd().parent / "src"))
 
 from labkit import data, generate, modeling, report, train
-from labkit.config import CONTRAST_KEYS, CONTRAST_MAX_STEPS, SPECS, get_tier
+from labkit.config import CONTRAST_EPOCHS, CONTRAST_KEYS, SPECS, get_tier
 
 ROOT = pathlib.Path.cwd() if (pathlib.Path.cwd() / "data").exists() else pathlib.Path.cwd().parent
 TIER = get_tier(os.environ.get("COMPUTE_TIER", "T4"))
@@ -80,8 +80,11 @@ def run_contrast(key: str) -> dict:
         print(f"  matched rank for {key}: r={r} (alpha={spec.alpha})")
 
     trainable = modeling.count_lora_params(model, targets, spec.r)
+    # Same step budget as NB3's `correct`, derived from the same recipe rather than
+    # hardcoded -- one variable per contrast means the step count is NOT a variable.
+    max_steps = train.planned_steps(len(train_ds), TIER, CONTRAST_EPOCHS)
     want = train.sft_config_kwargs(TIER, spec, str(ROOT / "adapters" / key),
-                                   max_steps=CONTRAST_MAX_STEPS)
+                                   max_steps=max_steps)
     sft_kwargs, _ = train.filter_kwargs(SFTConfig, want, label=f"SFTConfig[{key}]")
     lora_kwargs, _ = train.filter_kwargs(
         LoraConfig, train.lora_config_kwargs(spec, targets), label=f"LoraConfig[{key}]")
@@ -98,7 +101,7 @@ def run_contrast(key: str) -> dict:
 
     row = train.summarize_run(spec, TIER, targets, trainable, elapsed, generate.peak_vram_gb())
     row["final_loss"] = round(res.training_loss, 4)
-    row["max_steps"] = CONTRAST_MAX_STEPS
+    row["max_steps"] = max_steps
     row["teaches"] = spec.teaches
     report.append_row(row, results_dir=ROOT / "results")
 
@@ -117,9 +120,13 @@ for key in CONTRAST_KEYS:
 # %% [markdown]
 # ## 3. Bảng đối chứng
 #
-# `correct` từ NB3 chạy nhiều step hơn — **đừng so loss trực tiếp với nó**. Ba run ở đây
-# so được với nhau vì cùng `max_steps`. Muốn so đầy đủ với `correct`, hãy chạy lại
-# `correct` với `max_steps=CONTRAST_MAX_STEPS` (một dòng, ~10 phút) và ghi rõ trong REPORT.
+# Cả bốn run — `correct` ở NB3 và ba run ở đây — chạy **cùng một số optimizer step**
+# (`train.planned_steps(...)`, xem `labkit.config.CONTRAST_EPOCHS`). Nên loss so được
+# trực tiếp: khác biệt duy nhất giữa mỗi contrast và `correct` là đúng một biến.
+#
+# > Trước đây NB4 cố định `max_steps=60` trong khi NB3 chạy 30 step, và phần này bảo bạn
+# > tự chạy lại `correct` cho công bằng. Đó là bug: contrast được huấn luyện gấp đôi
+# > baseline mà nó bị đem ra so.
 
 # %%
 cols = ["run", "label", "r", "trainable_params", "learning_rate", "final_loss",

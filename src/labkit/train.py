@@ -20,10 +20,26 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import math
 import warnings
 
 from . import device
 from .config import MAX_EFFECTIVE_BATCH, LoraSpec, Tier
+
+WARMUP_FRACTION = 0.1
+
+
+def planned_steps(n_examples: int, tier: Tier, epochs: float) -> int:
+    """Optimizer steps that `epochs` over `n_examples` takes on `tier`.
+
+    NB3 sets an *epoch* budget and lets the Trainer derive the step count; NB4's
+    contrasts set `max_steps` directly. The autopsy only means anything if both land on
+    the SAME number, so both go through this function rather than one of them hardcoding
+    a guess. `n_examples` must be the count AFTER `data.to_training_dataset()`, which
+    drops examples with zero supervised tokens.
+    """
+    per_epoch = math.ceil(n_examples / tier.effective_batch)
+    return max(1, math.ceil(per_epoch * epochs))
 
 
 def _accepted_fields(cls) -> set[str]:
@@ -67,6 +83,7 @@ def sft_config_kwargs(
     output_dir: str,
     *,
     max_steps: int | None = None,
+    total_steps: int | None = None,
     num_train_epochs: float = 1.0,
     mask_mode: str = "assistant-only",
     seed: int = 42,
@@ -86,7 +103,6 @@ def sft_config_kwargs(
         gradient_accumulation_steps=tier.grad_accum,
         learning_rate=spec.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.1,
         num_train_epochs=num_train_epochs,
         logging_steps=5,
         save_strategy="no",
@@ -96,6 +112,15 @@ def sft_config_kwargs(
         loss_type="chunked_nll",                  # TRL >= 1.7 default; big VRAM saving
         gradient_checkpointing=True,
     )
+    # `warmup_ratio` does not exist any more. transformers v5 / TRL 1.10 expose only
+    # `warmup_steps` (measured on Colab 2026-08-20: SFTConfig warm-fields == ['warmup_steps']).
+    # Passing the ratio does not raise -- filter_kwargs drops it with a warning and the run
+    # silently trains with NO warmup, which is exactly the class of quiet failure this lab
+    # is about. Convert the deck's 10% into an absolute step count.
+    steps = max_steps if max_steps is not None else total_steps
+    if steps:
+        kw["warmup_steps"] = max(1, round(WARMUP_FRACTION * steps))
+
     # Precision follows the DEVICE, not the fashion. A free-Colab T4 is Turing and has
     # no bf16 at all — see labkit/device.py. Setting the wrong one here either errors at
     # trainer construction or silently trains in fp32.

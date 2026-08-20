@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 from labkit import modeling, train
-from labkit.config import SPECS, TIERS, get_tier
+from labkit.config import CONTRAST_EPOCHS, SPECS, TIERS, get_tier
 
 
 class _Lin:
@@ -281,3 +281,41 @@ def test_emulated_bf16_does_not_count_as_bf16_support(monkeypatch):
     assert info["capability"] == "7.5"
     assert info["bf16"] is False, "emulated bf16 must not be reported as support"
     assert device.precision() == "fp16"
+
+
+# --- warmup + step budget (F-16) --------------------------------------------
+# transformers v5 / TRL 1.10 deleted `warmup_ratio`; only `warmup_steps` survives.
+# Passing the ratio does not raise -- filter_kwargs drops it with a warning -- so a run
+# that "looks fine" trains with no warmup at all. Measured on Colab 2026-08-20:
+# [f.name for f in dataclasses.fields(SFTConfig) if "warm" in f.name] == ["warmup_steps"]
+
+def test_warmup_ratio_is_never_emitted():
+    for kw in (train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o"),
+               train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", max_steps=30),
+               train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", total_steps=30)):
+        assert "warmup_ratio" not in kw, "removed in transformers v5 — would be silently dropped"
+
+
+def test_warmup_steps_follow_the_step_budget():
+    assert train.sft_config_kwargs(
+        get_tier("T4"), SPECS["correct"], "o", total_steps=30)["warmup_steps"] == 3
+    assert train.sft_config_kwargs(
+        get_tier("T4"), SPECS["correct"], "o", max_steps=30)["warmup_steps"] == 3
+    # never zero: round(0.1 * 4) == 0 would mean "warmup requested, none applied"
+    assert train.sft_config_kwargs(
+        get_tier("T4"), SPECS["correct"], "o", max_steps=4)["warmup_steps"] == 1
+
+
+def test_planned_steps_matches_the_measured_nb3_run():
+    """225 train rows, T4 (batch 1 x grad_accum 16), 2 epochs -> the 30 steps the real
+    T4 run printed as `100% 30/30`."""
+    assert train.planned_steps(225, get_tier("T4"), 2.0) == 30
+
+
+def test_contrasts_get_the_same_step_budget_as_the_baseline():
+    """NB4 used to hardcode max_steps=60 while NB3 ran 30 — every contrast was trained
+    twice as long as the baseline it is compared against."""
+    tier = get_tier("T4")
+    nb3 = train.planned_steps(225, tier, 2.0)
+    nb4 = train.planned_steps(225, tier, CONTRAST_EPOCHS)
+    assert nb3 == nb4 == 30

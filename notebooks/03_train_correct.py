@@ -111,9 +111,12 @@ assert 0 < sup < tot, "mask covers nothing or everything — stop and re-run NB1
 from peft import LoraConfig
 from trl import SFTConfig, SFTTrainer
 
+EPOCHS = float(os.environ.get("EPOCHS", 2))
 want_sft = train.sft_config_kwargs(
     TIER, SPEC, output_dir=str(ROOT / "adapters" / SPEC.key),
-    num_train_epochs=float(os.environ.get("EPOCHS", 2)), mask_mode=MASK_MODE,
+    num_train_epochs=EPOCHS, mask_mode=MASK_MODE,
+    # NB4 runs its contrasts at exactly this many steps -- see labkit.config.CONTRAST_EPOCHS.
+    total_steps=train.planned_steps(len(rows), TIER, EPOCHS),
 )
 sft_kwargs, dropped = train.filter_kwargs(SFTConfig, want_sft, label="SFTConfig")
 if dropped:
