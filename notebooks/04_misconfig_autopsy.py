@@ -92,6 +92,13 @@ def run_contrast(key: str) -> dict:
     trainer = SFTTrainer(model=model, args=SFTConfig(**sft_kwargs),
                          train_dataset=train_ds, processing_class=tok,
                          peft_config=LoraConfig(**lora_kwargs))
+    # Without this the `qlora` run dies at step 0: TRL hands back bf16 LoRA weights and
+    # fp16's GradScaler has no BFloat16 kernel. See F-23 / scripts/probe_precision.py.
+    fix = train.align_trainable_precision(trainer.model)
+    if fix.get("recast"):
+        print(f"  precision fix: recast {fix['recast']}/{fix['trainable_tensors']} "
+              f"trainable tensors bf16 -> fp32 for the fp16 GradScaler")
+
     t0 = time.perf_counter()
     res = trainer.train()
     elapsed = time.perf_counter() - t0

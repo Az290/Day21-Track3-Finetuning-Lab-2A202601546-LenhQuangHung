@@ -142,6 +142,12 @@ trainer = SFTTrainer(
     peft_config=LoraConfig(**lora_kwargs),
 )
 
+# TRL casts LoRA weights to bf16 regardless of the device or the fp16 flag it was
+# handed. fp16's GradScaler cannot unscale bf16 gradients -- see F-23 and
+# scripts/probe_precision.py. No-op on bf16/fp32 hardware.
+fix = train.align_trainable_precision(trainer.model)
+print("precision fix:", fix)
+
 t0 = time.perf_counter()
 result = trainer.train()
 elapsed = time.perf_counter() - t0

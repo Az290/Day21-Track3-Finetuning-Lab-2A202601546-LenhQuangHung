@@ -152,6 +152,49 @@ def sft_config_kwargs(
     return kw
 
 
+def align_trainable_precision(model, precision: str | None = None) -> dict:
+    """Make the trainable params something fp16's GradScaler can actually unscale.
+
+    Measured on a free-Colab T4 (`scripts/probe_precision.py --trainer qlora`): the
+    model handed to SFTTrainer has NO bfloat16 parameters, and the model SFTTrainer
+    hands back has 496 of them -- every LoRA weight -- while `fp16=True` and a
+    GradScaler is attached. Training then dies at the first optimizer step with
+
+        NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda"
+                             not implemented for 'BFloat16'
+
+    because that CUDA kernel has no BFloat16 overload. On a Turing card there is no
+    bf16 hardware at all, so the cast is not just unsupported, it is meaningless.
+
+    This is the exact failure `labkit/device.py` was written about -- "tutorials hardcode
+    bf16 because every 2026 tutorial is written on an A100" -- except the hardcoding is
+    inside the training library, downstream of both the quantization config and the
+    `fp16`/`bf16` flags we set. So it cannot be fixed by configuring TRL; it has to be
+    corrected on the model TRL returns.
+
+    fp32 is the target, not fp16: master weights in fp32 with fp16 autocast is the
+    standard mixed-precision setup, and it is what `prepare_model_for_kbit_training`
+    produces on its own. Call this after constructing the Trainer and before `.train()`
+    -- the optimizer is not built until then, so re-typing the parameters is safe.
+
+    Returns a summary of what moved, so a run that needed the fix says so out loud
+    instead of quietly working for reasons nobody can see.
+    """
+    import torch
+
+    prec = device.precision(precision)
+    if prec != "fp16":
+        return {"precision": prec, "recast": 0}
+
+    moved = 0
+    for param in model.parameters():
+        if param.requires_grad and param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float32)
+            moved += 1
+    total = sum(1 for p in model.parameters() if p.requires_grad)
+    return {"precision": prec, "recast": moved, "trainable_tensors": total}
+
+
 def lora_config_kwargs(spec: LoraSpec, target_modules: list[str]) -> dict:
     if spec.r is None or spec.alpha is None:
         raise ValueError(

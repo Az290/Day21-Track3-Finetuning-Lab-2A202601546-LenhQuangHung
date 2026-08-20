@@ -1,5 +1,6 @@
 """Placement resolution, parameter accounting, and version-defensive config building."""
 import dataclasses
+import pathlib
 import warnings
 
 import pytest
@@ -275,7 +276,10 @@ def test_emulated_bf16_does_not_count_as_bf16_support(monkeypatch):
         def is_bf16_supported(including_emulation=True):
             return True                        # what torch actually does on a T4
 
-    import torch
+    # importorskip, not a bare import: this test needs a real torch module to patch
+    # `cuda` onto, and a machine without torch should report SKIP, not FAIL. A suite with
+    # a permanently-red test teaches people to ignore red.
+    torch = pytest.importorskip("torch")
     monkeypatch.setattr(torch, "cuda", _FakeCuda)
     info = device.describe()
     assert info["capability"] == "7.5"
@@ -340,3 +344,60 @@ def test_epoch_budget_falls_back_cleanly(monkeypatch):
     monkeypatch.setenv("EPOCHS", "   ")          # an empty shell var must not crash
     assert training_epochs() == EPOCHS_DEFAULT
     assert training_epochs(1.0) == 1.0           # explicit override still wins
+
+
+# --- F-23: TRL casts LoRA weights to bf16 on hardware that has no bf16 ---------------
+# Measured on a free-Colab T4 (`scripts/probe_precision.py --trainer qlora`): the model
+# handed to SFTTrainer has zero bf16 params, the model it hands back has 496 -- every
+# LoRA weight -- while fp16=True and a GradScaler is attached. The first optimizer step
+# then raises NotImplementedError from a CUDA kernel with no BFloat16 overload.
+
+def test_bf16_trainables_are_recast_for_the_fp16_scaler(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from labkit import device
+
+    class _Model:
+        def __init__(self):
+            self.p = [torch.zeros(2, dtype=torch.bfloat16, requires_grad=True),
+                      torch.zeros(2, dtype=torch.float32, requires_grad=True),
+                      torch.zeros(2, dtype=torch.bfloat16)]          # frozen: leave alone
+
+        def parameters(self):
+            return iter(self.p)
+
+    monkeypatch.setattr(device, "precision", lambda explicit=None: "fp16")
+    m = _Model()
+    out = train.align_trainable_precision(m)
+
+    assert out["recast"] == 1, "only the trainable bf16 tensor should move"
+    assert m.p[0].dtype == torch.float32
+    assert m.p[1].dtype == torch.float32
+    assert m.p[2].dtype == torch.bfloat16, "frozen params are not the scaler's problem"
+
+
+def test_precision_alignment_is_a_noop_off_fp16(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from labkit import device
+
+    class _Model:
+        def __init__(self):
+            self.p = [torch.zeros(2, dtype=torch.bfloat16, requires_grad=True)]
+
+        def parameters(self):
+            return iter(self.p)
+
+    for prec in ("bf16", "fp32"):
+        monkeypatch.setattr(device, "precision", lambda explicit=None, _p=prec: _p)
+        m = _Model()
+        assert train.align_trainable_precision(m)["recast"] == 0
+        assert m.p[0].dtype == torch.bfloat16, "bf16 is correct where bf16 exists"
+
+
+def test_both_training_notebooks_apply_the_precision_fix():
+    """A fix that only NB3 calls leaves NB4's three contrasts dying at step 0."""
+    for nb in ("03_train_correct.py", "04_misconfig_autopsy.py"):
+        src = (pathlib.Path(__file__).resolve().parents[1] / "notebooks" / nb).read_text(
+            encoding="utf-8")
+        assert "align_trainable_precision" in src, f"{nb} trains without the F-23 fix"
+        assert src.index("align_trainable_precision") < src.index("trainer.train()"), (
+            f"{nb} must recast BEFORE training — the optimizer is built inside train()")
