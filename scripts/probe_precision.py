@@ -77,15 +77,88 @@ def probe(load_in_4bit: bool) -> None:
     generate.free_memory()
 
 
+def probe_through_trainer(key: str) -> None:
+    """Build the SFTTrainer exactly as NB4 does, then report what it actually holds.
+
+    Hand-replicating the PEFT setup (see `probe`) showed no bf16 anywhere, yet the run
+    dies inside fp16's GradScaler complaining about BFloat16 gradients. So the dtype is
+    introduced somewhere between "the model we pass in" and "the model TRL trains" --
+    and the only way to find out which is to ask the trainer. No training happens here.
+    """
+    import torch
+    from peft import LoraConfig
+    from trl import SFTConfig, SFTTrainer
+
+    from datasets import Dataset
+
+    from labkit import data, device, generate, modeling, train
+    from labkit.config import SPECS, get_tier
+
+    tier, spec = get_tier(), SPECS[key]
+    print(f"\n{'=' * 68}\nthrough SFTTrainer: {key} — {spec.label}\n{'=' * 68}")
+
+    model, tok = generate.load_base(tier, load_in_4bit=spec.load_in_4bit)
+    rows = [json_line for json_line in _train_rows()]
+    ds = Dataset.from_list(data.to_training_dataset(tok, rows, max_length=tier.max_length))
+
+    targets = modeling.resolve_target_modules(model, spec.target)
+    if spec.r is None:
+        base = modeling.resolve_target_modules(model, "text-linear")
+        spec = spec.resolved(modeling.matched_rank(model, base, SPECS["correct"].r, targets))
+
+    want = train.sft_config_kwargs(tier, spec, "/tmp/probe", max_steps=1)
+    sft, _ = train.filter_kwargs(SFTConfig, want, label="SFTConfig")
+    lora, _ = train.filter_kwargs(LoraConfig, train.lora_config_kwargs(spec, targets),
+                                  label="LoraConfig")
+    print("fp16 =", sft.get("fp16"), " bf16 =", sft.get("bf16"),
+          " precision() =", device.precision())
+
+    trainer = SFTTrainer(model=model, args=SFTConfig(**sft), train_dataset=ds,
+                         processing_class=tok, peft_config=LoraConfig(**lora))
+
+    tm = trainer.model
+    trainable = [(n, p) for n, p in tm.named_parameters() if p.requires_grad]
+    print("TRAINABLE in trainer:", counts(p for _, p in trainable))
+    bad = [n for n, p in trainable if p.dtype == torch.bfloat16]
+    if bad:
+        print(f"\n  *** {len(bad)} of {len(trainable)} trainable params are bfloat16.")
+        print("  *** GradScaler.unscale_ has no BFloat16 kernel -> NotImplementedError.")
+        for n in bad[:4]:
+            print("      ", n)
+    else:
+        print("\n  no bf16 trainable params — the dtype comes from somewhere else")
+
+    scaler = getattr(getattr(trainer, "accelerator", None), "scaler", None)
+    print("accelerator.scaler   :", type(scaler).__name__ if scaler else None)
+
+
+def _train_rows():
+    import json
+    p = ROOT / "data" / "split" / "train.jsonl"
+    if not p.exists():
+        p = ROOT / "data" / "train_seed.jsonl"
+    with p.open(encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            if i >= 32:            # a handful is plenty; nothing is trained
+                break
+            if line.strip():
+                yield json.loads(line)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--4bit", dest="only_4bit", action="store_true")
     ap.add_argument("--16bit", dest="only_16bit", action="store_true")
+    ap.add_argument("--trainer", metavar="RUN",
+                    help="build NB4's SFTTrainer for RUN (e.g. qlora) and dump dtypes")
     args = ap.parse_args()
 
     from labkit import device
     print(device.banner())
 
+    if args.trainer:
+        probe_through_trainer(args.trainer)
+        return 0
     if not args.only_4bit:
         probe(False)
     if not args.only_16bit:
