@@ -245,6 +245,42 @@ target metric *and* cheaper to serve.
 
 ---
 
+## F-13 — Colab's preinstalled **torchao 0.10.0** blocks NB3 entirely — **FIXED**
+
+**Severity: high — this is a hard stop on the documented default path.**
+
+```
+ImportError: Found an incompatible version of torchao.
+Found version 0.10.0, but only versions above 0.16.0 are supported
+```
+
+Raised inside `get_peft_model()` → `_create_new_module()`. Colab preinstalls
+torchao 0.10.0; peft 0.20 / transformers 5.15 require >0.16. **Nothing in
+`requirements.txt` pulled torchao in**, so pip never upgraded it and the stale
+preinstalled copy won. NB3 failed after 51 s.
+
+This is the failure mode a locally-tested lab cannot catch: the machine that broke it
+is the one with *extra* packages already installed, not missing ones. `pip install -r`
+succeeds; the conflict only appears at import time inside a third-party call.
+
+**Fix.** Explicit `torchao>=0.16` in `requirements.txt` and in both Colab bootstraps,
+with a comment saying why a package nothing imports directly is pinned.
+
+### Also confirmed on Colab: F-10, independently
+
+The same cell ran `scripts/check_mask_agreement.py` on the real T4:
+
+```
+labkit assistant-only : 11/31 tokens (35.5%)
+TRL  assistant_masks  :  0/31 tokens ( 0.0%)
+VERDICT: FAIL — TRL would supervise NOTHING.
+```
+
+Identical to the local reproduction — the F-10 fix is aimed at a real defect on the
+real platform, not an artifact of the Mac.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |

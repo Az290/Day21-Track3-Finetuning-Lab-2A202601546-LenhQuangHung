@@ -14,6 +14,12 @@ peft>=0.20,<1
 accelerate>=1.14,<2
 datasets>=5,<6
 
+# Colab preinstalls torchao 0.10.0; peft/transformers reject anything <= 0.16 with
+# "Found an incompatible version of torchao". Nothing in this file pulls torchao in, so
+# without an explicit pin the stale preinstalled copy wins and NB3 dies at
+# get_peft_model(). Verified on Colab 2026-08-21.
+torchao>=0.16
+
 # apply_chat_template needs jinja2, and transformers does NOT depend on it.
 jinja2>=3.1,<4
 tokenizers>=0.22,<1

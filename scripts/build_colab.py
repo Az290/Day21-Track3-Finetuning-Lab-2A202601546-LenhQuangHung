@@ -30,7 +30,7 @@ sys.path.insert(0, "src")
 subprocess.run([sys.executable, "-m", "pip", "install", "-q",
                 "transformers>=5.15,<6", "trl>=1.10,<2", "peft>=0.20,<1",
                 "accelerate>=1.14,<2", "datasets>=5,<6", "jinja2>=3.1,<4",
-                "bitsandbytes>=0.50,<1"], check=True)
+                "bitsandbytes>=0.50,<1", "torchao>=0.16"], check=True)
 
 os.environ.setdefault("COMPUTE_TIER", "T4")
 import torch
