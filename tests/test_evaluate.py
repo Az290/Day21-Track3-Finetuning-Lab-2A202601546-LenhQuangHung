@@ -146,3 +146,17 @@ def test_triage_product_folds_accents_but_categories_do_not():
 
 def test_triage_missing_keys_score_zero_for_those_fields():
     assert ev.triage_field_accuracy('{"intent":"doi_tra"}', LABEL) == pytest.approx(0.25)
+
+
+def test_format_and_target_scorers_agree_on_what_json_is():
+    """Regression: has_required_keys used a stricter parser than triage_field_accuracy,
+    so prose-wrapped JSON scored on target but 0 on format."""
+    prose = 'Day la ket qua phan loai: {"intent":"doi_tra","urgency":"cao",' \
+            '"product":"tai nghe bluetooth","sentiment":"tieu_cuc"} - hy vong giup duoc ban.'
+    assert ev.triage_field_accuracy(prose, LABEL) == 1.0
+    assert ev.has_required_keys(prose, ev.TRIAGE_KEYS) == 1.0, \
+        "format scorer must recognise the same JSON the target scorer parsed"
+
+
+def test_format_scorer_still_rejects_non_json():
+    assert ev.has_required_keys("khong co json o day", ev.TRIAGE_KEYS) == 0.0

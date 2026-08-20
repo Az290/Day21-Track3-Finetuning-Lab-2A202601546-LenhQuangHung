@@ -62,45 +62,6 @@ def keyword_recall(pred: str, keywords: list[str], fold_accents: bool = True) ->
     return hits / len(keywords)
 
 
-def json_parses(pred: str) -> float:
-    """Format compliance: does the output parse as JSON (fenced or bare)?"""
-    candidate = pred.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.S)
-    if fence:
-        candidate = fence.group(1).strip()
-    try:
-        json.loads(candidate)
-        return 1.0
-    except Exception:
-        return 0.0
-
-
-def has_required_keys(pred: str, keys: list[str]) -> float:
-    try:
-        candidate = pred.strip()
-        fence = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.S)
-        if fence:
-            candidate = fence.group(1).strip()
-        obj = json.loads(candidate)
-    except Exception:
-        return 0.0
-    if not isinstance(obj, dict) or not keys:
-        return 0.0
-    return sum(1 for k in keys if k in obj) / len(keys)
-
-
-def valid_reasoning_trace(pred: str, open_tag="<think>", close_tag="</think>") -> float:
-    """Deck §13.5: the metric that catches reasoning-trace collapse.
-
-    A trace is valid when the block exists, is closed, and is not empty. Task accuracy
-    can rise while this falls to zero — which is the entire point of measuring it.
-    """
-    if open_tag not in pred or close_tag not in pred:
-        return 0.0
-    body = pred.split(open_tag, 1)[1].split(close_tag, 1)[0]
-    return float(len(body.strip()) >= 10)
-
-
 def _parse_json_loose(pred: str):
     """Best-effort JSON extraction: bare, fenced, or the first {...} block."""
     candidate = (pred or "").strip()
@@ -118,6 +79,47 @@ def _parse_json_loose(pred: str):
         except Exception:
             return None
     return None
+
+
+def json_parses(pred: str) -> float:
+    """Format compliance: does the output parse as JSON (fenced or bare)?"""
+    candidate = pred.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", candidate, re.S)
+    if fence:
+        candidate = fence.group(1).strip()
+    try:
+        json.loads(candidate)
+        return 1.0
+    except Exception:
+        return 0.0
+
+
+def has_required_keys(pred: str, keys: list[str]) -> float:
+    """Fraction of required keys present in the emitted object.
+
+    Uses the SAME loose parser as `triage_field_accuracy`. They diverged at first —
+    this one only handled bare/fenced JSON while the target scorer also recovered a
+    `{...}` block embedded in prose. A model that answers
+    `"Day la ket qua: {...}"` would then score on the target group but zero on format,
+    which reads as a formatting failure that did not happen. Two scorers disagreeing
+    about whether output *is* JSON makes both numbers untrustworthy.
+    """
+    obj = _parse_json_loose(pred)
+    if not isinstance(obj, dict) or not keys:
+        return 0.0
+    return sum(1 for k in keys if k in obj) / len(keys)
+
+
+def valid_reasoning_trace(pred: str, open_tag="<think>", close_tag="</think>") -> float:
+    """Deck §13.5: the metric that catches reasoning-trace collapse.
+
+    A trace is valid when the block exists, is closed, and is not empty. Task accuracy
+    can rise while this falls to zero — which is the entire point of measuring it.
+    """
+    if open_tag not in pred or close_tag not in pred:
+        return 0.0
+    body = pred.split(open_tag, 1)[1].split(close_tag, 1)[0]
+    return float(len(body.strip()) >= 10)
 
 
 TRIAGE_KEYS = ["intent", "urgency", "product", "sentiment"]

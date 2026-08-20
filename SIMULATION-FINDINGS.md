@@ -217,6 +217,34 @@ against any base model they swap in.
 
 ---
 
+## F-11 — the format scorer was stricter than the target scorer — **FIXED**
+
+`triage_field_accuracy()` recovered a `{...}` block embedded in prose;
+`has_required_keys()` accepted only bare or fenced JSON. A model answering
+`"Day la ket qua: {...}"` therefore scored on **target** but **0.000 on format** — a
+formatting failure that did not happen. Two scorers disagreeing about what counts as
+JSON makes both numbers untrustworthy, and `format` is one of the four graded groups.
+
+Both now share `_parse_json_loose()`. +2 tests (76 total).
+
+Surfaced by the first real T4 measurement: `(a) base + naive prompt  target=0.000
+format=0.000`. Those particular zeros turned out to be genuine — a naive prompt with no
+schema produces prose, not JSON — but checking *why* they were zero exposed the
+inconsistency.
+
+## F-12 — observation: the optimized prompt is ~3× faster, not just more accurate
+
+Measured on the T4: baseline (a) ran at **44 s/batch**, baseline (b) at **15 s/batch**.
+Same model, same prompts, same decode settings. The optimized prompt tells the model to
+emit only JSON, so it emits ~20 tokens and stops; the naive prompt lets it ramble to the
+160-token cap.
+
+Worth teaching: prompt engineering bought a **3× latency win before any fine-tuning**,
+which sharpens deck §17's point that baseline (b) is a real bar — it is better on the
+target metric *and* cheaper to serve.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
