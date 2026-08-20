@@ -599,6 +599,127 @@ resumed run still prints all four. Verified on the VM: both finished contrasts s
 
 ---
 
+## F-25 — `.env` was never read by anything — **FIXED**
+
+**Severity: high.** README, `HARDWARE-GUIDE.md`, `.env.example` and `config.py`'s own
+docstring all state that editing `.env` selects the tier. Nothing parsed the file.
+`get_tier()` consulted `os.environ` only, and no dependency or code path populated it:
+
+```
+$ grep -c dotenv requirements*.txt src/labkit/*.py     # 0
+$ echo COMPUTE_TIER=LAPTOP > .env && python notebooks/01_data_and_mask.py
+tier=T4  model=unsloth/Qwen3.5-4B          # <- not LAPTOP
+```
+
+`MASK_MODE` and `EPOCHS` were ignored the same way — including the `EPOCHS` lever F-24
+documents as *the* supported way to time-box a run. A student on an 8-12 GB laptop who
+follows the documented instruction gets the T4 tier's 4B model and OOMs ten minutes
+later, having done exactly what they were told. Invisible on Colab, because there the
+documented default and the real default happen to agree.
+
+**Fix.** `labkit/env.py` — a dependency-free `.env` parser loaded from
+`labkit/__init__.py` before any submodule reads the environment. `requirements-cpu.txt`
+is the slice every student can install with no GPU, and `python-dotenv` is not worth a
+line in it for thirty lines of parsing. An already-set variable always wins, so
+`EVAL_LIMIT=8 make pipeline` and CI still override the file. +5 tests.
+
+---
+
+## F-26 — `colab_run.py` block-buffered the child's stdout, defeating F-08 — **FIXED**
+
+**Severity: medium.** The docstring claims "Output is NOT captured, so Colab streams it
+live and a long training run does not look like a hang." The children were spawned with
+neither `-u` nor `PYTHONUNBUFFERED`, so CPython block-buffers stdout whenever it is a
+**pipe** — which is what Colab, `tee`, and every redirect hand the child.
+
+Measured through a pipe, first line out of a 3-line script printing once per 1.2 s:
+
+```
+before fix: first line reached the pipe after 3.61s   (i.e. only at process exit)
+after  fix: first line reached the pipe after 0.01s
+```
+
+Observed live: >3 minutes of total stdout silence during NB2 while stderr flowed
+normally — the asymmetry is the signature of block buffering rather than a hang. The
+casualties are F-08's per-batch ETA lines, added specifically so students stop killing
+healthy runs, and they never reached the student. **Fix.** `-u` plus
+`PYTHONUNBUFFERED=1` on the child.
+
+---
+
+## F-27 — `verify.py` green-lit smoke runs — **FIXED**
+
+**Severity: medium.** NB2 already writes `smoke_mode` and `eval_limit` into
+`baselines_frozen.json`, and `.env.example` states that a submitted run must leave
+`EVAL_LIMIT` unset. `verify.py` read neither key, so an 8-item run printed
+`Ready to submit.` **Fix.** A `full eval set used` check that FAILs on `smoke_mode`,
+naming the item count and how to re-run.
+
+> Follow-up for the maintainer: `colab/Lab21_RUN_ALL.ipynb` defaults its widget to
+> `EVAL_LIMIT = "8"`, so the documented one-click path now produces a run this gate
+> correctly rejects. Left as-is deliberately — whether the default Colab run should be
+> submittable (~95-110 min) or fast (~15 min) is a product call, not a bug fix.
+
+---
+
+## F-28 — NB6 scored on 20 items in a full run — **FIXED**
+
+**Severity: low.** `notebooks/06_merge_and_serve.py` defaulted `EVAL_LIMIT` to `"20"`
+while every other notebook uses `0` = full set, so the merge no-regression assert
+silently ran on 20 of 50 items even in an unabridged run — and the assert is the whole
+point of the notebook. **Fix.** Default `0`, slice only when set, print the count.
+
+---
+
+## F-29 — the graded verdict was decided by string-matching its own prose — **FIXED**
+
+**Severity: low (correct today, one reworded sentence from being wrong).**
+
+```python
+passed=not any(r.startswith(("target", "general")) for r in reasons)
+```
+
+`regression_gate` computes both numeric conditions, throws them away, formats them into
+human-readable sentences, and then recovers the verdict by inspecting the first word of
+those sentences. Rewording a message — or translating it, in a lab written in
+Vietnamese — silently flips a pass to a fail. **Fix.** Derive `passed` from the
+booleans that were already computed. +2 tests.
+
+---
+
+## F-30 — `MASK_MODE` is inert on the shipped corpus, and a comment said otherwise — **FIXED (documented)**
+
+**Severity: medium (pedagogical, not behavioural).**
+
+`masked-think` and `response-only` produce a mask **identical** to `assistant-only` on
+the shipped data — 37/188 supervised tokens for all three, on the real 0.8B tokenizer.
+Two independent reasons:
+
+1. All 250 training answers are bare JSON; `<think>` appears zero times across all four
+   `data/*.jsonl` files.
+2. More subtly, `add_generation_prompt=True` already emits the *complete* empty block:
+
+```
+prefix: '...<|im_start|>assistant\n<think>\n\n</think>\n\n'
+```
+
+so the supervised span starts *past* `</think>` and `_skip_reasoning_chars` has nothing
+left in `[start, end)` to skip. Its docstring claimed the opposite — "Qwen3.5 emits
+`<think>\n\n</think>\n\n` even for a non-reasoning answer, so this fires on ordinary
+data too". It does emit it, but into the *prefix*, so the skip never fires on ordinary
+data. The second reason is the load-bearing one: even a corpus with traces in `output`
+needs them inside the assistant content, not merely present in the file.
+
+Knock-on: NB5's `valid_trace_rate` is structurally 0.0 for every run — the model is
+never trained on traces and generation runs `enable_thinking=False`.
+
+**Fix.** Corrected the docstring, documented the caveat in `.env.example`, and made
+`to_training_dataset()` warn when a think-mode is selected against a corpus that cannot
+exercise it. Deliberately **not** fixed by adding traces to the corpus: that would move
+`data/checksums.json` and trip the eval-drift gate for everyone. +3 tests.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
