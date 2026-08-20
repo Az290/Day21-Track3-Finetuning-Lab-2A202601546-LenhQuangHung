@@ -104,6 +104,10 @@ make clean        Xoá artefact sinh ra (giữ corpus gốc)
 > EPOCHS=1     make pipeline     # nửa số step -> phần HUẤN LUYỆN ngắn lại
 > ```
 >
+> Đo thật: `EPOCHS=1 EVAL_LIMIT=8` chạy NB1+NB2+NB3+NB5 hết **17 phút** (13s / 1,9 ph /
+> 9,2 ph / 5,7 ph). Thêm NB4 thì cộng khoảng 25–30 ph nữa — ba run đối chứng vẫn phải
+> train thật, `EVAL_LIMIT` không rút ngắn phần đó.
+>
 > `EPOCHS` áp cho **cả NB3 lẫn NB4** — không thể chỉnh một nửa. Đó là cố ý: ba run đối
 > chứng chỉ có nghĩa khi chúng chạy đúng bằng số step của `correct`, và `make verify`
 > đọc `runs.csv` để kiểm tra điều đó thật sự đã xảy ra.
