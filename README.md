@@ -75,7 +75,7 @@ make setup-cpu && make smoke && make nb1
 
 # Có GPU — cài torch cho CUDA của bạn TRƯỚC (xem đầu requirements.txt), rồi:
 make setup && make smoke
-make pipeline        # NB1 -> NB5, ~80 phút trên T4
+make pipeline        # NB1 -> NB5, ~95-110 phút trên T4 (đo thật)
 make verify          # cổng kiểm tra trước khi nộp
 ```
 
@@ -95,14 +95,24 @@ make clean        Xoá artefact sinh ra (giữ corpus gốc)
 
 ## Sáu notebook
 
-| NB | Tên | Thời gian | Cần GPU | Nội dung |
+| NB | Tên | Thời gian (T4, đo thật) | Cần GPU | Nội dung |
 |---|---|---|---|---|
-| **1** | `01_data_and_mask` | 2 ph | ✗ | chat template · **mask proof** · p95 → `max_length` · split seed 42 |
-| **2** | `02_baselines` | 10 ph | ✓ | **đóng băng eval** + đo baseline (a) và (b) **trước khi train** |
-| **3** | `03_train_correct` | 25 ph | ✓ | cấu hình vùng-không-hối-tiếc; in `layer_types` của chính model |
-| **4** | `04_misconfig_autopsy` | 35 ph | ✓ | 3 run đối chứng cùng step: `attn_only` · `wrong_lr` · `qlora` |
-| **5** | `05_evaluate_and_verdict` | 10 ph | ✓ | 4 nhóm · bảng 3 baseline · **cổng hồi quy** |
-| 6 | `06_merge_and_serve` | 10 ph | ✓ | merge + assert không tụt điểm + hot-swap adapter *(tuỳ chọn)* |
+| **1** | `01_data_and_mask` | **~25 giây** | ✗ | chat template · **mask proof** · p95 → `max_length` · split seed 42 |
+| **2** | `02_baselines` | **~23 ph** | ✓ | **đóng băng eval** + đo baseline (a) và (b) **trước khi train** |
+| **3** | `03_train_correct` | ~25 ph | ✓ | cấu hình vùng-không-hối-tiếc; in `layer_types` của chính model |
+| **4** | `04_misconfig_autopsy` | ~35 ph | ✓ | 3 run đối chứng cùng step: `attn_only` · `wrong_lr` · `qlora` |
+| **5** | `05_evaluate_and_verdict` | **~12 ph** | ✓ | 4 nhóm · bảng 3 baseline · **cổng hồi quy** |
+| 6 | `06_merge_and_serve` | ~10 ph | ✓ | merge + assert không tụt điểm + hot-swap adapter *(tuỳ chọn)* |
+
+> **Ngân sách thật: ~95–110 phút** cho core trên T4 free (lần đầu cộng thêm ~1,5 ph tải
+> 9,32 GB trọng số). Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** — baseline
+> (a), baseline (b), và bản fine-tune. Đó là cái giá của thiết kế ba-baseline, và nó đáng.
+>
+> **Khi đang lặp, dùng `EVAL_LIMIT`:**
+> ```bash
+> EVAL_LIMIT=8 make pipeline     # ~15 ph, đủ để bắt lỗi cấu hình
+> ```
+> Bài nộp thì để trống `EVAL_LIMIT` — `results/` có ghi lại nếu bạn chạy chế độ rút gọn.
 
 NB1–NB5 là **core**. NB6 là tuỳ chọn (có điểm thưởng).
 
