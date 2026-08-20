@@ -506,6 +506,99 @@ reload warning in next to it — that is where a student is standing when it bit
 
 ---
 
+## F-22 — the misconfig autopsy was decided by **training loss**, the thing the lab calls Lỗi #3 — **FIXED**
+
+NB4 is the notebook the lab titles *phần quan trọng nhất*. It trains three deliberately
+wrong adapters, saves them, prints a table, and asks:
+
+> `attn_only` có **cùng số tham số huấn luyện** với `correct`. Nó thắng hay thua?
+
+The only number in that table capable of answering is `final_loss` — a **training**
+loss. Nothing ever scored those adapters on the target task: NB5 evaluated
+`adapters/correct` and stopped. So the lab whose own NB4 header names *"chấm bằng
+perplexity"* as **Lỗi #3** was settling its central question with a proxy metric.
+
+It can also point the wrong way. 225 examples × 30 steps, and `attn_only` runs at
+r=283 to match the parameter budget. A memorising adapter can drive train loss *below*
+`correct` while being worse at the task — in which case the table hands the student the
+opposite of the lesson, with the lab's authority behind it.
+
+**Fix.** NB5 §4 scores all three contrasts on target + format (same scale as `correct`)
+and writes `results/autopsy.json`; `make verify` requires it. Contrasts skip the
+regression sweep — the graded four-group gate stays `correct`-only, so verdict semantics
+do not move. NB4 relabels the column as a training loss and points at NB5 for the
+ranking; the REPORT template gains a target column; rubric 2.5 says so explicitly.
+
+One trap avoided in the same change: `qlora` learned against a 4-bit base, so
+`score_adapter` takes `load_in_4bit` from the run's own spec. Scoring it on the fp16
+base would have measured a base/adapter mismatch and labelled the damage *"what QLoRA
+costs you"*.
+
+**Caught by reading NB5 while NB4 was still running.** The bug is invisible from NB4
+alone — it lives in what the *next* notebook does not do.
+
+---
+
+## F-23 — TRL casts LoRA weights to **bf16** on a GPU that has none — **FIXED**
+
+The pipeline died 55 minutes in, at step 0 of the `qlora` contrast:
+
+```
+NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda"
+                     not implemented for 'BFloat16'
+```
+
+raised from fp16's `GradScaler`. Every knob that could plausibly cause it was already
+correct — `bnb_4bit_compute_dtype=device.torch_dtype()`, `fp16=True`, `bf16=False`.
+Hand-replicating the PEFT setup produced **fp32** trainables and no bf16 at all, which
+disproved the obvious hypothesis rather than confirming it.
+
+So `scripts/probe_precision.py --trainer qlora` builds NB4's actual `SFTTrainer` and
+asks it:
+
+```
+model handed TO SFTTrainer : float16=178  uint8=248     <- zero bf16
+model handed BACK by it    : bfloat16=496               <- every LoRA weight
+fp16 = True   bf16 = False   precision() = fp16   scaler = GradScaler
+```
+
+**TRL casts the adapters to bf16 regardless of the device and regardless of the flags
+in the `SFTConfig` it was handed.** A T4 is Turing; it has no bf16 hardware at all, so
+the cast is not merely unsupported, it is meaningless. `GradScaler.unscale_` then hits a
+CUDA kernel with no `BFloat16` overload and the run is over.
+
+This is precisely the failure `labkit/device.py` was written about — *"tutorials hardcode
+bf16 because every 2026 tutorial is written on an A100"* — except the hardcoding is
+**inside the training library**, downstream of both the quantization config and our own
+flags. It cannot be configured away.
+
+**Fix.** `train.align_trainable_precision()` corrects the model TRL returns: trainable
+bf16 → fp32, which is what mixed precision wants anyway and what
+`prepare_model_for_kbit_training` produces unaided. Called in NB3 and NB4 after
+constructing the Trainer and before `.train()` (the optimizer is not built until then).
+No-op on real bf16 hardware. NB4 prints when it fires. +3 tests; the notebook gate is
+verified to fail when the call is removed.
+
+**Only reachable through the 4-bit path**, which is why NB3, `attn_only` and `wrong_lr`
+all trained clean and this waited until the last of four runs to appear.
+
+---
+
+## F-24 — NB4 restarted from zero after a crash in its third run — **FIXED**
+
+F-23 destroyed 55 minutes of finished work: `attn_only` and `wrong_lr` had trained and
+saved, and the only way to reach `qlora` again was to retrain both. On Colab — where
+runtimes are dropped for idling, for tab closes, and for nothing in particular — a
+75-minute notebook with no resume is a notebook students will not finish.
+
+**Fix.** An existing `adapters/<key>/adapter_model.safetensors` counts as done.
+`FORCE_RETRAIN=1` redoes everything, `ONLY=qlora` redoes one, deleting a directory redoes
+that one. The contrast table reads `runs.csv` rather than this session's rows, so a
+resumed run still prints all four. Verified on the VM: both finished contrasts skipped,
+`qlora` alone re-ran.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
