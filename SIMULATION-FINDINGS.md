@@ -95,7 +95,7 @@ and NB3 in another will hit this. Belongs in HARDWARE-GUIDE.md.
 
 ---
 
-## F-06 — a "16 GB" T4 gives **14.6 GB** usable — **DOC FIX NEEDED**
+## F-06 — a "16 GB" T4 gives **14.6 GB** usable — **FIXED**
 
 Colab reports `VRAM: 14.6 GB`, not 16. The `Qwen3.5-4B` bf16 checkpoint is **9.32 GB**
 on the wire, so weights alone take ~62% of the card before any activations, LoRA state
@@ -143,7 +143,7 @@ Colab cell is to interrupt it.
 labelled by which pass is running (`(a) base + naive prompt/target`, `ft/regression`,
 …). NB2 and NB5 pass labels through.
 
-## F-09 — the published time budget is optimistic — **DOC FIX NEEDED**
+## F-09 — the published time budget is optimistic — **FIXED**
 
 README claims NB2 ≈ 10 min and the core ≈ 80 min on a T4. Measured on free Colab:
 
@@ -175,6 +175,26 @@ The structural cause is that the eval set is generated **three times** across th
 (baseline a, baseline b, fine-tune). That is inherent to the three-baseline design and
 is the right trade — but the README must say so, and `EVAL_LIMIT` should be presented
 as the normal way to iterate rather than a hidden knob.
+
+**Resolved 2026-08-20 with end-to-end measurements** (`docs/MEASURED-T4-2026-08-20.md`).
+Final numbers, now published as **ranges** in README and HARDWARE-GUIDE:
+
+| stage | was published | measured |
+|---|---|---|
+| NB2 | 10 ph | **17–23 ph** |
+| NB3 | 25 ph | **15–25 ph** |
+| NB4 | 35 ph | **45–60 ph** |
+| NB5 | 10 ph | **21 ph** (now scores the contrasts too — F-22) |
+| core | 80 ph | **100–130 ph** |
+
+Ranges, not point estimates: the *same* 30-step config took **1456 s and then 1021 s**
+on identical code, because a free T4 is shared and throttled. And the earlier projection
+here was wrong in both directions — fp16 (F-15) sped up **generation** ~3.5× but did not
+speed up training at all (48.5 s/step on both paths), while NB4 got *slower* once F-17
+stopped the contrasts from being under-counted. Do not describe the fp16 fix as a
+training speedup.
+
+`EPOCHS` and `EVAL_LIMIT` are both documented in README as the supported time-box levers.
 
 ---
 

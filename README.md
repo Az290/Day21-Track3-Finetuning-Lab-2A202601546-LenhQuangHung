@@ -83,17 +83,18 @@ make clean        Xoá artefact sinh ra (giữ corpus gốc)
 | NB | Tên | Thời gian (T4, đo thật) | Cần GPU | Nội dung |
 |---|---|---|---|---|
 | **1** | `01_data_and_mask` | **~25 giây** | ✗ | chat template · **mask proof** · p95 → `max_length` · split seed 42 |
-| **2** | `02_baselines` | **~23 ph** | ✓ | **đóng băng eval** + đo baseline (a) và (b) **trước khi train** |
-| **3** | `03_train_correct` | ~25 ph | ✓ | cấu hình vùng-không-hối-tiếc; in `layer_types` của chính model |
-| **4** | `04_misconfig_autopsy` | ~35 ph | ✓ | 3 run đối chứng cùng step: `attn_only` · `wrong_lr` · `qlora` |
-| **5** | `05_evaluate_and_verdict` | **~12 ph** | ✓ | 4 nhóm · bảng 3 baseline · **cổng hồi quy** |
+| **2** | `02_baselines` | **~17–23 ph** | ✓ | **đóng băng eval** + đo baseline (a) và (b) **trước khi train** |
+| **3** | `03_train_correct` | **~15–25 ph** | ✓ | cấu hình vùng-không-hối-tiếc; in `layer_types` của chính model |
+| **4** | `04_misconfig_autopsy` | **~45–60 ph** | ✓ | 3 run đối chứng cùng step: `attn_only` · `wrong_lr` · `qlora` |
+| **5** | `05_evaluate_and_verdict` | **~21 ph** | ✓ | 4 nhóm · bảng 3 baseline · **cổng hồi quy** · chấm 3 run đối chứng |
 | 6 | `06_merge_and_serve` | ~10 ph | ✓ | merge + assert không tụt điểm + hot-swap adapter *(tuỳ chọn)* |
 
-> **Ngân sách thật: ~95–110 phút** cho core trên T4 free (lần đầu cộng thêm ~1,5 ph tải
-> 9,32 GB trọng số). *Các con số này đo khi T4 còn chạy **bf16 giả lập** — một lỗi đã
-> được sửa sau đó (xem `SIMULATION-FINDINGS.md` F-15). Chúng là **cận trên**; lần đo lại
-> với fp16 nhiều khả năng nhanh hơn.* Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** — baseline
-> (a), baseline (b), và bản fine-tune. Đó là cái giá của thiết kế ba-baseline, và nó đáng.
+> **Ngân sách thật: ~100–130 phút** cho core trên T4 free (lần đầu cộng thêm ~1,5 ph tải
+> 9,32 GB trọng số). Đo thật 2026-08-20 với fp16 — xem `docs/MEASURED-T4-2026-08-20.md`.
+> Đây là **khoảng**: cùng một cấu hình 30 step chạy 1456 s rồi 1021 s trên đúng mã đó,
+> vì T4 free bị chia sẻ. Sinh văn bản chiếm phần lớn: tập eval được sinh **ba lần** —
+> baseline (a), baseline (b), và bản fine-tune. Đó là cái giá của thiết kế ba-baseline,
+> và nó đáng.
 >
 > **Hai cần gạt khi bạn bị bó thời gian.** Cả hai đều để **mặc định** khi nộp bài;
 > `results/` ghi lại nếu bạn chạy chế độ rút gọn.

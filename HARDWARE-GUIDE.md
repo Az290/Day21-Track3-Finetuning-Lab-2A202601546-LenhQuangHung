@@ -78,12 +78,19 @@ Có GPU NVIDIA dùng được không?
 | Notebook | T4 | A100 |
 |---|---:|---:|
 | NB1 data + mask | 2 ph | 2 ph |
-| NB2 baselines | ~10 ph | ~4 ph |
-| NB3 train | ~25 ph | ~8 ph |
-| NB4 ba đối chứng | ~35 ph | ~12 ph |
-| NB5 eval + verdict | ~10 ph | ~4 ph |
-| **Core (NB1–NB5)** | **~80 ph** | **~30 ph** |
+| NB2 baselines | **~17–23 ph** | ~6 ph |
+| NB3 train | **~15–25 ph** | ~6 ph |
+| NB4 ba đối chứng | **~45–60 ph** | ~18 ph |
+| NB5 eval + verdict | **~21 ph** | ~7 ph |
+| **Core (NB1–NB5)** | **~100–130 ph** | **~40 ph** |
 | NB6 merge (tuỳ chọn) | ~10 ph | ~4 ph |
+
+> **Đây là KHOẢNG, không phải một con số** — đo thật trên T4 free ngày 2026-08-20. Cùng
+> một cấu hình 30 step chạy hết **1456 s** lần đầu rồi **1021 s** lần sau, mã không đổi:
+> GPU free bị chia sẻ và bị bóp xung. Đừng lập kế hoạch theo cận dưới.
+>
+> Hết giờ? `EPOCHS=1` giảm một nửa NB3 **và** NB4; `EVAL_LIMIT=8` rút ngắn phần sinh văn
+> bản. Cả hai để mặc định khi nộp — xem README.
 
 Hết giờ? Thứ tự ưu tiên: **NB1 → NB2 → NB3 → NB5**, rồi NB4 nếu còn thời gian. NB1 và NB5
 là hai notebook mang nhiều điểm nhất.
