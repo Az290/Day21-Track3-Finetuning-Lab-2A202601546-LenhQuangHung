@@ -89,12 +89,20 @@ def generate_batch(
     max_new_tokens: int = 160,
     enable_thinking: bool = False,
     batch_size: int = 4,
+    label: str = "generate",
+    progress: bool = True,
 ) -> tuple[list[str], float]:
     """Greedy decode. Returns (completions, mean_latency_ms_per_item).
 
     Greedy (do_sample=False) is deliberate: this lab compares runs, and sampling noise
     would swamp the differences you are trying to measure.
+
+    `progress` prints a per-batch line with an ETA. This is not decoration: on a free
+    T4 a 4B model takes tens of minutes to score the eval set, and a notebook that
+    prints nothing for that long is indistinguishable from a hang. Students kill runs
+    that look stuck.
     """
+    import sys
     import torch
 
     outs: list[str] = []
@@ -103,7 +111,9 @@ def generate_batch(
         tok.pad_token = tok.eos_token
     tok.padding_side = "left"
 
-    for i in range(0, len(prompts), batch_size):
+    n_batches = (len(prompts) + batch_size - 1) // batch_size
+    t_start = time.perf_counter()
+    for bi, i in enumerate(range(0, len(prompts), batch_size), start=1):
         chunk = prompts[i:i + batch_size]
         texts = []
         for p in chunk:
@@ -128,4 +138,13 @@ def generate_batch(
         for row, src in zip(gen, enc["input_ids"]):
             outs.append(tok.decode(row[len(src):], skip_special_tokens=True).strip())
 
+        if progress:
+            done = time.perf_counter() - t_start
+            eta = done / bi * (n_batches - bi)
+            print(f"  [{label}] batch {bi}/{n_batches}  "
+                  f"{done:5.0f}s elapsed  ~{eta:5.0f}s left", flush=True)
+
+    if progress:
+        print(f"  [{label}] done: {len(prompts)} prompts in "
+              f"{time.perf_counter() - t_start:.0f}s", flush=True)
     return outs, total_ms / max(1, len(prompts))

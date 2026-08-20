@@ -14,12 +14,33 @@ Qwen3.5. Đổi model thì phải đổi số — và đo lại bằng `torch.cu
 |---|---:|---|
 | Qwen3.5-0.8B | ~3 GB | mọi GPU; CPU chỉ để làm NB1 |
 | Qwen3.5-2B | ~5 GB | laptop 8–12 GB |
-| **Qwen3.5-4B** | **~10 GB** | **Colab Free T4 (16 GB)** ✓ |
+| **Qwen3.5-4B** | **~10 GB** | **Colab Free T4 (14,6 GB khả dụng)** ✓ |
 | Qwen3.5-9B | ~22 GB | L4 22.5 GB, A100 40 GB, RTX 3090/4090 |
 | Qwen3.5-27B | ~56 GB | A100 80 GB, H100 |
 
 Activation + KV cache tăng theo `max_length × batch`. Tier T4 dùng `max_length=1024`,
 `batch=1`, `grad_accum=16` → batch hiệu dụng 16 (dưới trần 32 của deck §10.4).
+
+> **Đo thực tế trên Colab Free (08/2026):** T4 báo **14,6 GB** khả dụng, không phải 16.
+> Checkpoint `Qwen3.5-4B` bf16 nặng **9,32 GB** khi tải — riêng trọng số đã chiếm ~64%
+> card trước khi tính activation, LoRA và trạng thái optimizer. Vẫn chạy, nhưng biên an
+> toàn hẹp: đừng nâng `max_length` quá 1024 ở tier này.
+
+### ⚠ T4 KHÔNG có bfloat16
+
+T4 là kiến trúc **Turing (sm_75)**. **bf16 cần Ampere (sm_80) trở lên.** Phần lớn hướng
+dẫn fine-tuning 2026 đặt cứng `bf16=True` vì được viết trên A100 — và hỏng trên đúng
+loại GPU mà lab này khuyến nghị.
+
+Lab tự chọn độ chính xác theo thiết bị (`labkit/device.py`): bf16 → fp16 → fp32:
+
+```python
+from labkit import device
+print(device.banner())
+```
+
+fp16 **không** chỉ là đổi cờ: dải số mũ nhỏ hơn nhiều nên huấn luyện cần **gradient
+scaling** để tránh underflow — trainer chỉ bật khi được báo `fp16=True`.
 
 ### Vì sao mặc định là bf16 LoRA chứ không phải QLoRA?
 
@@ -36,7 +57,7 @@ nhất là với biến thể MoE (deck §12). Ở 4B, bf16 LoRA vẫn vừa T4,
 | Bạn có | Tier | Ghi chú |
 |---|---|---|
 | Không GPU | `CPU` | NB1 + toàn bộ test. Huấn luyện thì dùng Colab. |
-| Colab Free T4 16 GB | **`T4`** | mặc định của lab |
+| Colab Free T4 (14,6 GB) | **`T4`** | mặc định của lab |
 | Kaggle T4 ×2 | `T4` | dùng 1 GPU; lab không cần multi-GPU |
 | Laptop RTX 3060/4060 12 GB | `LAPTOP` | Qwen3.5-2B cho chắc; 4B có thể OOM ở NB4 |
 | RTX 3090/4090, L4, A100 | `BIGGPU` | Qwen3.5-9B |
@@ -77,4 +98,6 @@ là hai notebook mang nhiều điểm nhất.
 | OOM ở run thứ 2 của NB4 | model cũ chưa được giải phóng | `generate.free_memory()` (đã có sẵn giữa các run) |
 | `bitsandbytes` không cài được | macOS / không CUDA | bỏ qua run `qlora`; hai đối chứng còn lại vẫn chạy |
 | Colab ngắt kết nối giữa NB4 | runtime free bị giới hạn | chạy từng `make nb4` một; adapter đã lưu sau mỗi run |
+| `Quá nhiều phiên đang hoạt động` | **Colab free chỉ cho MỘT phiên GPU** | Thời gian chạy → Quản lý phiên → Chấm dứt các phiên khác |
+| `Your setup doesn't support bf16` | GPU đời trước Ampere | Đã xử lý tự động; nếu vẫn gặp, ép `precision="fp16"` |
 | Rất chậm dù có GPU | torch bản CPU | `python -c "import torch; print(torch.cuda.is_available())"` |

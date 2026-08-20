@@ -57,12 +57,13 @@ def score_adapter(adapter_dir: pathlib.Path, system_prompt: str | None) -> tuple
     model.eval()
 
     preds, lat = generate.generate_batch(
-        model, tok, [r["input"] for r in target], system=system_prompt)
+        model, tok, [r["input"] for r in target], system=system_prompt, label="ft/target")
     tgt = sum(ev.triage_field_accuracy(p, r["label"]) for p, r in zip(preds, target)) / len(target)
     fmt = sum(ev.has_required_keys(p, ev.TRIAGE_KEYS) for p in preds) / len(preds)
 
     rpreds, _ = generate.generate_batch(
-        model, tok, [r["instruction"] for r in regression], system=None, max_new_tokens=96)
+        model, tok, [r["instruction"] for r in regression], system=None, max_new_tokens=96,
+        label="ft/regression")
     reg = sum(ev.keyword_recall(p, r["keywords"]) for p, r in zip(rpreds, regression)) / len(regression)
 
     # Deck §13.5 — reasoning-trace collapse. Only meaningful if the base has a thinking

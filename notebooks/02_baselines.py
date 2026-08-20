@@ -57,13 +57,15 @@ generate.free_memory()
 # %%
 def score_run(model, tok, system_prompt, label):
     prompts = [r["input"] for r in target]
-    preds, lat = generate.generate_batch(model, tok, prompts, system=system_prompt)
+    preds, lat = generate.generate_batch(model, tok, prompts, system=system_prompt,
+                                         label=f"{label}/target")
 
     tgt = sum(ev.triage_field_accuracy(p, r["label"]) for p, r in zip(preds, target)) / len(target)
     fmt = sum(ev.has_required_keys(p, ev.TRIAGE_KEYS) for p in preds) / len(preds)
 
     rprompts = [r["instruction"] for r in regression]
-    rpreds, _ = generate.generate_batch(model, tok, rprompts, system=None, max_new_tokens=96)
+    rpreds, _ = generate.generate_batch(model, tok, rprompts, system=None, max_new_tokens=96,
+                                        label=f"{label}/regression")
     reg = sum(ev.keyword_recall(p, r["keywords"]) for p, r in zip(rpreds, regression)) / len(regression)
 
     scores = ev.GroupScores(target=tgt, regression=reg, format=fmt, latency_ms=lat, n=len(target))

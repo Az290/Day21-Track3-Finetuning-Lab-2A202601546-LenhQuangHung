@@ -130,6 +130,37 @@ never hardcoded and one that a T4-shaped device produces the explanatory note.
 
 ---
 
+## F-08 — NB2/NB5 print nothing for tens of minutes — **FIXED**
+
+**Severity: medium (usability, but it makes students kill good runs).**
+
+`score_run()` prints only after a whole baseline finishes. On the free T4 the observed
+gap between "Loading weights: 100%" and the first number was **>15 minutes** with zero
+output. That is indistinguishable from a hang, and the documented remedy for a hung
+Colab cell is to interrupt it.
+
+**Fix.** `generate_batch()` now prints a per-batch line with elapsed time and ETA,
+labelled by which pass is running (`(a) base + naive prompt/target`, `ft/regression`,
+…). NB2 and NB5 pass labels through.
+
+## F-09 — the published time budget is optimistic — **DOC FIX NEEDED**
+
+README claims NB2 ≈ 10 min and the core ≈ 80 min on a T4. Measured on free Colab:
+
+| Stage | Claimed | Observed |
+|---|---|---|
+| NB1 | 2 min | **26 s** ✅ |
+| model download (first run only) | not mentioned | **~70 s** for 9.32 GB |
+| weight load | not mentioned | ~30 s |
+| NB2 baseline (a) alone | — | **>15 min and still running** |
+
+Two compounding causes: 50 target + 15 regression prompts get generated **twice** (once
+per baseline), and until F-07 the T4 was running **emulated bf16** because the config
+hardcoded it. Re-measure after the fp16 fix before rewriting the numbers — but the
+current README figures should not be trusted.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |
