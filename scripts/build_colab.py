@@ -8,6 +8,7 @@ Usage: python scripts/build_colab.py    (needs jupytext)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -40,6 +41,20 @@ print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N
 """
 
 
+def _stamp_cell_ids(raw: dict) -> None:
+    """Give every cell an id derived from its position and content.
+
+    nbformat mints a RANDOM id per cell, so regenerating unchanged notebooks produced a
+    ~90-line diff of nothing but id churn. That is not cosmetic: a diff that is always
+    noise is a diff nobody reads, which is how the stale-bootstrap bug (F-18) survived
+    a review. Now `make colab` on unchanged sources is a genuinely empty diff, and any
+    line that does move is a line that means something.
+    """
+    for i, cell in enumerate(raw.get("cells", [])):
+        body = "".join(cell.get("source", []))
+        cell["id"] = hashlib.sha1(f"{i}\x00{body}".encode()).hexdigest()[:8]
+
+
 def main() -> int:
     try:
         import jupytext
@@ -57,6 +72,7 @@ def main() -> int:
         # ensure_ascii=True: Vietnamese content must survive tooling that assumes ASCII
         jupytext.write(nb, dest, fmt="ipynb")
         raw = json.loads(dest.read_text(encoding="utf-8"))
+        _stamp_cell_ids(raw)
         dest.write_text(json.dumps(raw, ensure_ascii=True, indent=1), encoding="utf-8")
         made.append(dest.name)
     print(f"wrote {len(made)} notebooks to colab/:")

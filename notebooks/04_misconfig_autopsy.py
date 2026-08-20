@@ -26,7 +26,7 @@ sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
 sys.path.insert(0, str(pathlib.Path.cwd().parent / "src"))
 
 from labkit import data, generate, modeling, report, train
-from labkit.config import CONTRAST_EPOCHS, CONTRAST_KEYS, SPECS, get_tier
+from labkit.config import CONTRAST_KEYS, SPECS, get_tier, training_epochs
 
 ROOT = pathlib.Path.cwd() if (pathlib.Path.cwd() / "data").exists() else pathlib.Path.cwd().parent
 TIER = get_tier(os.environ.get("COMPUTE_TIER", "T4"))
@@ -82,7 +82,7 @@ def run_contrast(key: str) -> dict:
     trainable = modeling.count_lora_params(model, targets, spec.r)
     # Same step budget as NB3's `correct`, derived from the same recipe rather than
     # hardcoded -- one variable per contrast means the step count is NOT a variable.
-    max_steps = train.planned_steps(len(train_ds), TIER, CONTRAST_EPOCHS)
+    max_steps = train.planned_steps(len(train_ds), TIER, training_epochs())
     want = train.sft_config_kwargs(TIER, spec, str(ROOT / "adapters" / key),
                                    max_steps=max_steps)
     sft_kwargs, _ = train.filter_kwargs(SFTConfig, want, label=f"SFTConfig[{key}]")
@@ -121,7 +121,7 @@ for key in CONTRAST_KEYS:
 # ## 3. Bảng đối chứng
 #
 # Cả bốn run — `correct` ở NB3 và ba run ở đây — chạy **cùng một số optimizer step**
-# (`train.planned_steps(...)`, xem `labkit.config.CONTRAST_EPOCHS`). Nên loss so được
+# (`train.planned_steps(...)`, xem `labkit.config.training_epochs`). Nên loss so được
 # trực tiếp: khác biệt duy nhất giữa mỗi contrast và `correct` là đúng một biến.
 #
 # > Trước đây NB4 cố định `max_steps=60` trong khi NB3 chạy 30 step, và phần này bảo bạn

@@ -155,14 +155,30 @@ SPECS: dict[str, LoraSpec] = {
 
 CONTRAST_KEYS = ["attn_only", "wrong_lr", "qlora"]
 
-# NB4's contrasts must run the SAME number of optimizer steps as NB3's `correct` run,
-# otherwise the autopsy measures step budget instead of configuration. NB3 spends an
-# EPOCH budget, so its step count falls out of tier + dataset size and cannot be a
-# constant here -- NB4 derives it with `train.planned_steps(len(train_ds), TIER,
-# CONTRAST_EPOCHS)`.
-#
-# This WAS a constant (60), calibrated against a "~10 minutes" estimate. Measured on a
-# free-Colab T4 at 48.5 s/step that is 48 minutes per contrast -- and 2x the 30 steps
-# NB3 actually runs, so every contrast was being trained twice as long as the baseline
-# it is compared against.
-CONTRAST_EPOCHS = 2.0
+EPOCHS_DEFAULT = 2.0
+
+
+def training_epochs(override: float | None = None) -> float:
+    """The epoch budget -- ONE number, shared by NB3's baseline and NB4's contrasts.
+
+    NB4's contrasts must run the SAME number of optimizer steps as NB3's `correct` run,
+    otherwise the autopsy measures step budget instead of configuration. Both notebooks
+    turn this into a step count with `train.planned_steps(n_examples, tier, epochs)`.
+
+    Why a function and not two constants. This started as `CONTRAST_MAX_STEPS = 60`,
+    calibrated against a "~10 minutes" estimate; measured on a free-Colab T4 at 48.5
+    s/step that is 48 minutes per contrast, and 2x the 30 steps NB3 actually runs -- so
+    every contrast was trained twice as long as the baseline it is compared against.
+    The first fix made both notebooks derive the count, but left NB3 reading $EPOCHS
+    while NB4 read a frozen constant: setting `EPOCHS=1` re-opened the same divergence
+    through the front door. One reader, one env var, no way to set half of it.
+
+    `EPOCHS=1` is the supported lever when you are time-boxed -- it halves NB3 *and*
+    NB4. Submit with the default, and `scripts/verify.py` cross-checks the step budget
+    recorded in `results/runs.csv` so the fairness of the comparison is a checked fact
+    rather than a promise.
+    """
+    if override is not None:
+        return float(override)
+    raw = os.environ.get("EPOCHS", "").strip()
+    return float(raw) if raw else EPOCHS_DEFAULT

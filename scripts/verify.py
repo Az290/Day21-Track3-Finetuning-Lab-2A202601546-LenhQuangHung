@@ -188,6 +188,26 @@ def full() -> None:
         check("NB4 contrast runs", OK if not missing else WARN,
               "" if not missing else f"missing {sorted(missing)} (core requires all three)")
 
+        # Same idea as the trainable-param check below, one axis over: a contrast that
+        # ran a different number of optimizer steps is measuring the step budget, not
+        # the configuration under test. `EPOCHS=1` is fine -- it moves all four runs.
+        budgets = {r["run"]: r["max_steps"] for r in rows
+                   if r.get("run") and str(r.get("max_steps", "")).strip()}
+        graded = {k: v for k, v in budgets.items()
+                  if k in {"correct", "attn_only", "wrong_lr", "qlora"}}
+        if len(graded) < len(names & {"correct", "attn_only", "wrong_lr", "qlora"}):
+            check("step budget recorded", WARN,
+                  "some runs have no `max_steps` in runs.csv (older artifacts) — re-run "
+                  "NB3/NB4 so the fairness of the comparison can be checked, not assumed")
+        elif len(set(graded.values())) > 1:
+            check("all runs share ONE step budget", FAIL,
+                  f"{graded} — the contrasts and the baseline trained for different "
+                  "numbers of steps, so this autopsy compares budget, not configuration. "
+                  "Set $EPOCHS once and re-run NB3 and NB4 together.")
+        elif graded:
+            check("all runs share ONE step budget", OK,
+                  f"{sorted(graded)} at {next(iter(graded.values()))} steps")
+
         for r in rows:
             if r.get("run") == "attn_only" and r.get("trainable_params") and r.get("r"):
                 correct = next((x for x in rows if x.get("run") == "correct"), None)

@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 from labkit import modeling, train
-from labkit.config import CONTRAST_EPOCHS, SPECS, TIERS, get_tier
+from labkit.config import EPOCHS_DEFAULT, SPECS, TIERS, get_tier, training_epochs
 
 
 class _Lin:
@@ -317,5 +317,26 @@ def test_contrasts_get_the_same_step_budget_as_the_baseline():
     twice as long as the baseline it is compared against."""
     tier = get_tier("T4")
     nb3 = train.planned_steps(225, tier, 2.0)
-    nb4 = train.planned_steps(225, tier, CONTRAST_EPOCHS)
+    nb4 = train.planned_steps(225, tier, training_epochs())
     assert nb3 == nb4 == 30
+
+
+@pytest.mark.parametrize("epochs", ["1", "2", "3", "0.5"])
+def test_the_epoch_budget_moves_for_both_notebooks_or_neither(monkeypatch, epochs):
+    """The first fix made both notebooks *derive* the step count, but NB3 read $EPOCHS
+    while NB4 read a frozen constant — so `EPOCHS=1` re-opened the divergence through
+    the documented interface. One reader means you cannot set half of it."""
+    monkeypatch.setenv("EPOCHS", epochs)
+    tier = get_tier("T4")
+    nb3 = train.planned_steps(225, tier, training_epochs())      # NB3's call
+    nb4 = train.planned_steps(225, tier, training_epochs())      # NB4's call
+    assert nb3 == nb4
+    assert nb3 == train.planned_steps(225, tier, float(epochs))
+
+
+def test_epoch_budget_falls_back_cleanly(monkeypatch):
+    monkeypatch.delenv("EPOCHS", raising=False)
+    assert training_epochs() == EPOCHS_DEFAULT
+    monkeypatch.setenv("EPOCHS", "   ")          # an empty shell var must not crash
+    assert training_epochs() == EPOCHS_DEFAULT
+    assert training_epochs(1.0) == 1.0           # explicit override still wins
