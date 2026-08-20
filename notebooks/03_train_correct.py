@@ -17,13 +17,14 @@ import json, os, pathlib, sys, time
 sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
 sys.path.insert(0, str(pathlib.Path.cwd().parent / "src"))
 
-from labkit import data, generate, modeling, report, train
+from labkit import data, device, generate, modeling, report, train
 from labkit.config import SPECS, get_tier
 
 ROOT = pathlib.Path.cwd() if (pathlib.Path.cwd() / "data").exists() else pathlib.Path.cwd().parent
 TIER = get_tier(os.environ.get("COMPUTE_TIER", "T4"))
 SPEC = SPECS["correct"]
 print(f"{TIER.name} · {TIER.model_id} · {SPEC.label}")
+print(device.banner())      # which precision is ACTUALLY being used, and why
 
 # %% [markdown]
 # ## 1. Nạp model — và nhìn vào kiến trúc bạn đang fine-tune

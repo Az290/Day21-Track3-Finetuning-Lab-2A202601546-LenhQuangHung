@@ -281,6 +281,46 @@ real platform, not an artifact of the Mac.
 
 ---
 
+## F-14 — `padding_free=True` was unconditional; on the default tier it is both unsafe and useless — **FIXED**
+
+NB3 died at trainer construction:
+
+```
+ValueError: When `padding_free=True` without packing, `max_length` is not enforced.
+```
+
+preceded by two warnings that matter more than the error:
+
+```
+Padding-free training is enabled, but the attention implementation is not set to a
+supported Flash Attention variant ... only the following are known to reliably support
+this: flash_attention_2, flash_attention_3, ...
+Using a batch size of 1 annihilates the benefits of padding-free training.
+```
+
+Three separate problems in one flag:
+
+1. **Unsafe here.** Padding-free flattens a batch into one sequence. Without a kernel
+   that understands the boundaries, attention can run *across* them — literally deck
+   §13.3's warning ("packing is free only when sequence boundaries are respected")
+   applied to packing's sibling flag. **FlashAttention-2 needs Ampere (sm_80+), so a T4
+   cannot have it at all.**
+2. **Useless here.** The T4 tier uses `per_device_train_batch_size=1`. There is no
+   inter-sequence padding to remove in a batch of one.
+3. **Incompatible with the F-10 fix.** Pre-tokenized labels force `packing=False`, and
+   TRL rejects `padding_free` + `max_length` without packing.
+
+**Fix.** `device.supports_padding_free(batch)` requires an importable FlashAttention
+kernel **and** batch ≥ 2. When it *is* available, `max_length=None` is passed —
+honest, because `build_example()` already truncates — rather than silencing the check.
++3 tests (79 total).
+
+**Meta-point worth keeping:** the deck teaches `packing` + `padding_free` as the §13.3
+recommendation. On the hardware the lab actually recommends, neither is available. The
+lab now says that out loud instead of setting flags that do not apply.
+
+---
+
 ## Verified working
 
 | Check | Where | Result |

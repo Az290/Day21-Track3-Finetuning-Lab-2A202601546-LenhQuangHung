@@ -129,7 +129,6 @@ def test_sft_kwargs_use_the_post_v1_names():
     kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "out")
     assert "max_length" in kw and "max_seq_length" not in kw
     assert "eval_strategy" not in kw or "evaluation_strategy" not in kw
-    assert kw["padding_free"] is True
     assert kw["loss_type"] == "chunked_nll"
 
 
@@ -216,3 +215,32 @@ def test_mask_mode_does_not_leak_into_trl_flags():
     for mode in ("assistant-only", "everything", "response-only"):
         kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", mask_mode=mode)
         assert "assistant_only_loss" not in kw and "completion_only_loss" not in kw
+
+
+
+# --- padding_free must be conditional (F-14) --------------------------------
+
+def test_padding_free_off_without_flash_attention(monkeypatch):
+    """T4 case: no FlashAttention -> padding_free must be off, and max_length kept."""
+    from labkit import device
+    monkeypatch.setattr(device, "has_flash_attention", lambda: False)
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o")
+    assert kw["padding_free"] is False
+    assert kw["max_length"] == get_tier("T4").max_length
+
+
+def test_padding_free_off_at_batch_size_one(monkeypatch):
+    """Even WITH flash-attn, batch=1 makes padding-free pointless."""
+    from labkit import device
+    monkeypatch.setattr(device, "has_flash_attention", lambda: True)
+    assert get_tier("T4").per_device_batch == 1
+    assert train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o")["padding_free"] is False
+
+
+def test_padding_free_on_sets_max_length_none(monkeypatch):
+    """TRL rejects padding_free + max_length without packing; we pre-truncate, so None."""
+    from labkit import device
+    monkeypatch.setattr(device, "has_flash_attention", lambda: True)
+    kw = train.sft_config_kwargs(get_tier("BIGGPU"), SPECS["correct"], "o")
+    assert get_tier("BIGGPU").per_device_batch >= 2
+    assert kw["padding_free"] is True and kw["max_length"] is None

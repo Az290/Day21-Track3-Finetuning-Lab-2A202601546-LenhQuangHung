@@ -125,7 +125,7 @@ SPECS: dict[str, LoraSpec] = {
     "correct": LoraSpec(
         key="correct", r=16, alpha=32, target="text-linear", lr=LORA_LR,
         load_in_4bit=False,
-        label="all-linear · r=16 · LR 10x · bf16",
+        label="all-linear · r=16 · LR 10x · 16-bit",
         teaches="The deck's low-regret configuration (§10).",
     ),
     # r=None => resolved at runtime by modeling.matched_rank() so this run sits on the
@@ -134,14 +134,14 @@ SPECS: dict[str, LoraSpec] = {
     "attn_only": LoraSpec(
         key="attn_only", r=None, alpha=None, target="attn-only", lr=LORA_LR,
         load_in_4bit=False,
-        label="q,v only · r=matched · LR 10x · bf16",
+        label="q,v only · r=matched · LR 10x · 16-bit",
         teaches="Mistake #1 (§10.2): attention-only placement, rank raised to *match "
                 "parameter count*. If rank were the lever, this would win.",
     ),
     "wrong_lr": LoraSpec(
         key="wrong_lr", r=16, alpha=32, target="text-linear", lr=FULL_FT_LR,
         load_in_4bit=False,
-        label="all-linear · r=16 · LR 1x (full-FT scale) · bf16",
+        label="all-linear · r=16 · LR 1x (full-FT scale) · 16-bit",
         teaches="Mistake #2 (§10.3): a full-fine-tune learning rate applied to LoRA.",
     ),
     "qlora": LoraSpec(

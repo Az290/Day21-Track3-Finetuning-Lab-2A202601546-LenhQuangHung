@@ -75,3 +75,34 @@ def banner() -> str:
         line += ("\n  note: this GPU predates Ampere, so it has NO bfloat16. Using fp16 "
                  "with gradient scaling instead. Tutorials that hardcode bf16=True fail here.")
     return line
+
+def has_flash_attention() -> bool:
+    """Is a FlashAttention kernel importable?
+
+    TRL warns that `padding_free=True` is only known to behave with
+    flash_attention_2/3 kernels. FlashAttention-2 needs **Ampere (sm_80) or newer**, so
+    on the lab's default T4 it is unavailable no matter what you install.
+    """
+    for mod in ("flash_attn", "kernels"):
+        try:
+            __import__(mod)
+            return True
+        except ImportError:
+            continue
+    return False
+
+
+def supports_padding_free(min_batch: int = 2) -> bool:
+    """Whether `padding_free=True` is both SAFE and USEFUL here.
+
+    Two independent conditions, and the lab's default tier fails both:
+
+    * **Safe** — needs a FlashAttention kernel. Padding-free flattens a batch into one
+      sequence; without a kernel that understands the boundaries, attention can run
+      across them. That is exactly deck §13.3's warning ("packing is free only when
+      sequence boundaries are respected") applied to its sibling flag.
+    * **Useful** — pointless at `per_device_train_batch_size=1`: there is no padding
+      between sequences to remove when a batch holds one sequence. TRL says so
+      outright: *"Using a batch size of 1 annihilates the benefits of padding-free."*
+    """
+    return has_flash_attention() and min_batch >= 2

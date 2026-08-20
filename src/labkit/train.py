@@ -93,7 +93,6 @@ def sft_config_kwargs(
         report_to="none",
         seed=seed,
         packing=False,       # we supply pre-tokenized labels -- see the note below
-        padding_free=True,
         loss_type="chunked_nll",                  # TRL >= 1.7 default; big VRAM saving
         gradient_checkpointing=True,
     )
@@ -103,6 +102,18 @@ def sft_config_kwargs(
     prec = device.precision(precision)
     kw["bf16"] = prec == "bf16"
     kw["fp16"] = prec == "fp16"
+
+    # `padding_free` is enabled only where it is both safe and useful — see
+    # device.supports_padding_free(). On the default T4 it is neither: Turing has no
+    # FlashAttention-2, and per_device_batch=1 leaves no padding to remove.
+    # It also conflicts with our setup: TRL raises
+    #   "When padding_free=True without packing, max_length is not enforced"
+    # because we pass pre-tokenized labels (packing off). Our inputs ARE already
+    # truncated by build_example(), so when padding-free IS available we hand TRL
+    # max_length=None to satisfy that check honestly rather than silencing it.
+    kw["padding_free"] = device.supports_padding_free(tier.per_device_batch)
+    if kw["padding_free"]:
+        kw["max_length"] = None
 
     # NOTE — deliberately NOT setting `assistant_only_loss`.
     # TRL derives that mask from `{% generation %}` markers in the chat template, and
