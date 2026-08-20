@@ -801,6 +801,30 @@ reason no student could have diagnosed from the artifacts.
 
 **Why nothing caught it sooner:** NB5 had never completed a single run before today.
 
+### Verified on GPU — smoke configuration
+
+Re-ran `EPOCHS=1 EVAL_LIMIT=8 FORCE_RETRAIN=1` (the lab's own documented fast-iteration
+mode) on the same T4:
+
+| | target | regression | format | latency |
+|---|---|---|---|---|
+| (a) base + naive prompt | 0.000 | 0.750 | 0.000 | 3280 ms |
+| (b) base + optimized prompt | 0.688 | 0.750 | 1.000 | 1042 ms |
+| **(c) LoRA fine-tune** | **0.500** | 0.750 | **1.000** | **1566 ms** |
+
+* **format 0.000 → 1.000** — the fine-tune emits parseable 4-key JSON. That is the claim.
+* **latency 10418 → 1566 ms/sample**, a 6.6× drop, because the model now produces JSON
+  and stops instead of rambling to the 160-token cap. The tell arrived before the score:
+  `[ft/target] done: 8 prompts in 13s`, against ~83 s for the same sweep while broken.
+* **regression unchanged at 0.750** — no catastrophic forgetting.
+
+The gate still reports **FAILED**: 0.500 < (b)'s 0.688. That is a *legitimate* outcome at
+this budget, not a residual bug — 15 optimizer steps instead of 30, scored on 8 items
+where one item is worth 0.125. **Whether a correctly-configured fine-tune can actually
+beat baseline (b) on this task is still unmeasured**, and it needs the full run
+(`EPOCHS=2`, 50 items, all four adapters retrained). Do not quote 0.500 as the lab's
+result; quote it as proof that the pipeline transmits learning to the eval at all.
+
 ---
 
 ## Verified working
