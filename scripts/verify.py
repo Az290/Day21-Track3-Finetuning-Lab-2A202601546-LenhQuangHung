@@ -140,6 +140,17 @@ def full() -> None:
     # --- NB2 integrity: was baseline (b) a real bar? ---
     frozen = _load_json(ROOT / "results" / "baselines_frozen.json")
     if frozen:
+        # NB2 already records this; nothing read it, so `verify.py` cheerfully printed
+        # "Ready to submit." for a run scored on 8 items. `.env.example` states that a
+        # submitted run must leave EVAL_LIMIT unset — this is the check that enforces it.
+        if frozen.get("smoke_mode"):
+            check("full eval set used", FAIL,
+                  f"EVAL_LIMIT={frozen.get('eval_limit')} — this run scored "
+                  f"{frozen.get('n_target')} target items, not the full set. Smoke mode "
+                  "is for iterating; unset EVAL_LIMIT and re-run NB2+NB5 to submit.")
+        else:
+            check("full eval set used", OK, f"{frozen.get('n_target')} target items")
+
         try:
             from labkit.generate import OPTIMIZED_PROMPT
             expected = hashlib.sha256(OPTIMIZED_PROMPT.encode()).hexdigest()[:16]
