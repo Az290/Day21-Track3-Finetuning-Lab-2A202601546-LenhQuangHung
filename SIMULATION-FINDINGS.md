@@ -864,22 +864,80 @@ read off the checkpoint the student is fine-tuning.
 
 ---
 
+## First complete NB1 → NB5 execution (RTX 3060 12 GB, `Qwen/Qwen3.5-0.8B`)
+
+NB3 completion, NB4 and NB5 had never run to the end — the Colab extension dropped
+mid-training every time. On a local Ampere card, on the merged tree (F-22…F-31), all
+five stages completed **exit 0 in 33.9 minutes**, full 50-item eval, `EVAL_LIMIT` unset:
+
+```
+nb1   9s     nb2  126s     nb3  446s     nb4  1308s     nb5  147s     total 2036s
+```
+
+This is the CPU tier's 0.8B model run on a GPU, so absolute scores are not comparable
+to the 4B Colab numbers above. The *orderings* are the result.
+
+### The three-baseline table
+
+| run | target | regression | format | latency |
+|---|---|---|---|---|
+| (a) base + naive prompt | 0.000 | 0.644 | 0.000 | 1471 ms |
+| (b) base + optimized prompt | 0.495 | 0.644 | 1.000 | 404 ms |
+| **(c) LoRA fine-tune** | **0.990** | **0.067** | **1.000** | 626 ms |
+
+**Verdict: FAILED — on catastrophic forgetting alone.** `target_delta +0.495`,
+`regression_delta −0.578` against a 0.020 tolerance.
+
+This is deck §14.3 in its most vivid form. Training on `bare ticket → JSON` with no
+instruction taught the model that *any* input means "emit triage JSON", so it now
+answers general-knowledge questions with JSON too. The better the task fit, the more
+total the collapse. The fix is the one §14.3 names: 1–5% replay data.
+
+Worth recording alongside it — the same adapter measured before the F-31 prompt change,
+i.e. with the instruction still in the eval prompt, scored **target 1.000 / regression
+0.522**. Nearly the same task score, an order of magnitude more generality retained.
+The shrunk prompt gives the model no signal that this is *a* task rather than *the*
+task. Anyone tempted to close F-31 by shrinking the prompt further should read that
+pair of numbers first.
+
+### The autopsy, on the target metric (F-22)
+
+Four runs, one shared step budget (58), one shared parameter budget (10,822,656):
+
+| run | r | final_loss | **target** | format | VRAM |
+|---|---|---|---|---|---|
+| correct | 16 | 0.3944 | **0.990** | 1.000 | 3.07 GB |
+| attn_only | 271 | 0.4340 | 0.935 | 1.000 | 3.08 GB |
+| qlora | 16 | 0.4243 | 0.930 | 0.980 | **2.29 GB** |
+| wrong_lr | 16 | 1.5426 | **0.325** | 0.995 | 3.08 GB |
+
+Both deck claims reproduce. §10.2: `correct` beats `attn_only` at a matched parameter
+budget, so placement beats rank. §10.3: a full-fine-tune learning rate is the single
+most destructive knob — `wrong_lr` collapses to 0.325 with 4x the training loss.
+§12: 4-bit buys 25% less VRAM for a small but real accuracy cost.
+
+**F-31 was masking F-22's evidence.** Before the prompt fix, `attn_only` had the *lower*
+training loss (0.0741 vs `correct`'s 0.0827) — judged on loss you would have shipped
+Mistake #1. With the schema in the prompt the task was near-copying, and a rank-271
+adapter concentrated in 6 layers memorised it best. Once the model had to internalise
+the label space, the ordering flipped and now agrees with the target metric. Two
+defects were interacting.
+
+### Hybrid attention sharpens §10.2 beyond what the deck claims
+
+On this base, `q_proj`/`v_proj` exist only on the 6 `full_attention` layers; the other
+18 are `linear_attention` with `in_proj_*`/`out_proj`. Attention-only placement
+therefore reaches **12 modules across 6 of 24 layers**, and `matched_rank()` climbs to
+**r=271** — a 17x rank increase buying zero extra layer coverage, at a parameter budget
+matched to 0.0000%.
+
+---
+
 ## Not verified
 
-The browser extension disconnected mid-training, so these remain **unrun**:
-
-* **NB3 completion** — it was training (30 steps, 48 s/step, ~23 min ETA) with the
-  post-fix configuration when the connection dropped. Everything up to and including
-  the first optimizer step is verified.
-* **NB4** (three contrast runs) and **NB5** (verdict) — never reached.
-* The **fp16** path end-to-end: NB3's observed run used *emulated* bf16 because of
-  F-15, which was fixed after that run started. The fix is unit-tested but has not
-  itself been exercised on a T4.
-
-**To resume** (the Colab runtime and `results/` survive; artifacts are on disk there):
-
-```
-!pip install -q "torchao>=0.16" && git pull -q && python scripts/colab_run.py nb3 nb4 nb5
-```
-
-Nothing in the resume depends on this machine — the repo has every fix.
+* The **T4 / fp16 path** end-to-end. The run above is Ampere (sm_86) using native bf16,
+  so `device.precision()`'s fp16 branch remains unit-tested but not exercised on real
+  Turing hardware.
+* `unsloth/Qwen3.5-4B` end-to-end. NB2 completed on it (see above); NB3→NB5 on the 4B
+  model have still not run to completion on a T4.
+* **NB6** (merge + adapter hot-swap) — optional, and not run in any session yet.
