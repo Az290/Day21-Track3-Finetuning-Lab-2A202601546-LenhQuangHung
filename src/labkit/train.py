@@ -21,6 +21,7 @@ import dataclasses
 import inspect
 import warnings
 
+from . import device
 from .config import MAX_EFFECTIVE_BATCH, LoraSpec, Tier
 
 
@@ -68,6 +69,7 @@ def sft_config_kwargs(
     num_train_epochs: float = 1.0,
     mask_mode: str = "assistant-only",
     seed: int = 42,
+    precision: str | None = None,
 ) -> dict:
     """The SFTConfig we *want*. Pass through `filter_kwargs` before constructing."""
     if tier.effective_batch > MAX_EFFECTIVE_BATCH:
@@ -89,12 +91,18 @@ def sft_config_kwargs(
         save_strategy="no",
         report_to="none",
         seed=seed,
-        bf16=True,
         packing=True,
         padding_free=True,                        # §13.3: packing is safe only with this
         loss_type="chunked_nll",                  # TRL >= 1.7 default; big VRAM saving
         gradient_checkpointing=True,
     )
+    # Precision follows the DEVICE, not the fashion. A free-Colab T4 is Turing and has
+    # no bf16 at all — see labkit/device.py. Setting the wrong one here either errors at
+    # trainer construction or silently trains in fp32.
+    prec = device.precision(precision)
+    kw["bf16"] = prec == "bf16"
+    kw["fp16"] = prec == "fp16"
+
     # Only one of these should ever be set; assistant_only_loss is the multi-turn form.
     if mask_mode == "everything":
         kw["completion_only_loss"] = False

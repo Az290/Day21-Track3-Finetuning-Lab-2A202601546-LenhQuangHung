@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import time
 
+from . import device
 from .config import Tier
 
 # The two prompts that define baselines (a) and (b). Baseline (b) has to be a genuine
@@ -64,14 +65,17 @@ def load_base(tier: Tier, load_in_4bit: bool = False):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(tier.model_id, trust_remote_code=True)
-    kwargs: dict = {"trust_remote_code": True, "dtype": torch.bfloat16, "device_map": "auto"}
+    # dtype (not torch_dtype — deprecated in transformers 5.x) and NOT hardcoded bf16:
+    # the lab's default tier is a T4, which has no bfloat16 (see labkit/device.py).
+    kwargs: dict = {"trust_remote_code": True, "dtype": device.torch_dtype(),
+                    "device_map": "auto"}
     if load_in_4bit:
         from transformers import BitsAndBytesConfig
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_compute_dtype=device.torch_dtype(),
         )
     model = AutoModelForCausalLM.from_pretrained(tier.model_id, **kwargs)
     return model, tok

@@ -134,6 +134,53 @@ def test_sft_kwargs_use_the_post_v1_names():
     assert kw["assistant_only_loss"] is True
 
 
+# --- precision must follow the device, not the fashion -----------------------
+# The lab's default tier is a free-Colab T4 = Turing = NO bfloat16. Hardcoding
+# bf16=True (as most 2026 tutorials do, because they were written on A100s) breaks
+# on the exact hardware this lab recommends.
+
+@pytest.mark.parametrize("prec,expect_bf16,expect_fp16", [
+    ("bf16", True, False),
+    ("fp16", False, True),
+    ("fp32", False, False),
+])
+def test_precision_flags_are_mutually_exclusive(prec, expect_bf16, expect_fp16):
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o", precision=prec)
+    assert kw["bf16"] is expect_bf16
+    assert kw["fp16"] is expect_fp16
+    assert not (kw["bf16"] and kw["fp16"]), "never set both"
+
+
+def test_precision_is_never_hardcoded():
+    """Regression: an earlier version always emitted bf16=True."""
+    from labkit import device
+    kw = train.sft_config_kwargs(get_tier("T4"), SPECS["correct"], "o")
+    assert kw["bf16"] is (device.precision() == "bf16")
+
+
+def test_bad_precision_rejected():
+    from labkit import device
+    with pytest.raises(ValueError, match="bf16"):
+        device.precision("float8")
+
+
+def test_describe_reports_a_device():
+    from labkit import device
+    info = device.describe()
+    assert info["device"] in ("cpu", "cuda", "mps")
+    assert device.precision() in ("bf16", "fp16", "fp32")
+
+
+def test_banner_warns_when_gpu_lacks_bf16(monkeypatch):
+    """A T4-shaped device must produce the explanatory note."""
+    from labkit import device
+    monkeypatch.setattr(device, "describe", lambda: {
+        "device": "cuda", "name": "Tesla T4", "bf16": False, "fp16": True,
+        "capability": "7.5", "vram_gb": 14.6})
+    text = device.banner()
+    assert "precision=fp16" in text and "NO bfloat16" in text and "sm_75" in text
+
+
 def test_effective_batch_ceiling_is_enforced():
     from labkit.config import Tier
     bad = Tier("BAD", "m", 1, 1024, 8, 8, "")     # 8*8 = 64 > 32
