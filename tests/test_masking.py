@@ -2,6 +2,7 @@
 import pytest
 from fake_tokenizer import FakeTokenizer
 from labkit import data
+from labkit.config import NAIVE_PROMPT
 
 
 ANSWER = "Ha Noi la thu do Viet Nam."
@@ -121,9 +122,25 @@ def test_token_stats_empty():
 
 
 def test_to_messages_normalizes_alpaca_and_chat():
-    m = data.to_messages({"instruction": "dich cau nay", "input": "hello", "output": "xin chao"})
-    assert m[0]["role"] == "user" and "dich cau nay" in m[0]["content"] and "hello" in m[0]["content"]
-    assert m[1] == {"role": "assistant", "content": "xin chao"}
+    rec = {"instruction": "dich cau nay", "input": "hello", "output": "xin chao"}
+
+    # Default (F-31): the shape evaluation actually sends — short system prompt, bare
+    # input in the user turn. The instruction is deliberately NOT folded in; internalising
+    # it is what the fine-tune is for.
+    m = data.to_messages(rec)
+    assert [x["role"] for x in m] == ["system", "user", "assistant"]
+    assert m[0]["content"] == NAIVE_PROMPT
+    assert m[1]["content"] == "hello"
+    assert "dich cau nay" not in m[1]["content"], (
+        "folding the instruction into the user turn is the pre-F-31 shape; evaluation "
+        "never sends it, so training on it cannot transfer")
+    assert m[2] == {"role": "assistant", "content": "xin chao"}
+
+    # system=None reproduces the old shape on purpose, so NB1 can show both.
+    old = data.to_messages(rec, system=None)
+    assert old[0]["role"] == "user"
+    assert "dich cau nay" in old[0]["content"] and "hello" in old[0]["content"]
+
     passthrough = [{"role": "user", "content": "x"}]
     assert data.to_messages({"messages": passthrough}) == passthrough
 

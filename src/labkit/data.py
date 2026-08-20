@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import statistics
 import warnings
+
+from .config import NAIVE_PROMPT
 from dataclasses import dataclass, field
 
 IGNORE_INDEX = -100
@@ -263,13 +265,43 @@ def _round_pow2(n: int) -> int:
     return p
 
 
-def to_messages(record: dict) -> list[dict]:
-    """Normalize the common instruction formats to a messages list."""
+def to_messages(record: dict, system: str | None = NAIVE_PROMPT) -> list[dict]:
+    """Normalize the common instruction formats to a messages list.
+
+    **`system` decides what the model is trained to condition on, and it has to be the
+    same thing evaluation will hand it.** This is F-31, the defect that made every
+    adapter in the lab score 0.000:
+
+        old (system=None)   user: "<full schema + enum list>\n\n<ticket>"  -> JSON
+        eval always sent    system: "Phân loại ticket sau."  +  user: "<ticket>"
+
+    Training folded the whole instruction -- keys, enum values, "chỉ trả về JSON" -- into
+    the user turn, and there was no system message at all. Evaluation then asked for the
+    same task from a prompt containing none of it, in a role structure the model had
+    never seen. NB5's comment ("the behaviour moved into the weights, so the prompt can
+    shrink") is the right ambition, but the prompt was shrunk at evaluation time without
+    ever training the shrunk form. The model answered the question it was actually
+    asked -- vague instruction, no schema -- with fluent Vietnamese prose, and scored
+    zero on both target and format while its training loss looked perfect.
+
+    So the default is now the *evaluation* prompt: the ticket alone in the user turn,
+    `NAIVE_PROMPT` as the system message. What the model has to internalise is the label
+    space, which is exactly the thing fine-tuning is supposed to buy you here.
+
+    Pass `system=None` to reproduce the old instruction-in-the-user-turn shape -- NB1
+    uses it to show the two renders side by side.
+    """
     if "messages" in record and isinstance(record["messages"], list):
         return record["messages"]
     instruction = record.get("instruction") or record.get("prompt") or record.get("question") or ""
     context = record.get("input") or record.get("context") or ""
     output = record.get("output") or record.get("response") or record.get("answer") or ""
+    if system is not None and context:
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": str(context).strip()},
+            {"role": "assistant", "content": str(output).strip()},
+        ]
     user = f"{instruction}\n\n{context}".strip() if context else str(instruction).strip()
     return [
         {"role": "user", "content": user},
@@ -346,3 +378,31 @@ def split(records: list, train_frac: float = 0.9, seed: int = 42) -> tuple[list,
     rng.shuffle(idx)
     cut = int(len(idx) * train_frac)
     return [records[i] for i in idx[:cut]], [records[i] for i in idx[cut:]]
+
+
+def prompt_alignment(tokenizer, record: dict, system: str | None = NAIVE_PROMPT,
+                     enable_thinking: bool | None = False) -> dict:
+    """Does the prompt we TRAIN on match the prompt evaluation will send?
+
+    F-31: it did not, and nothing checked. Training folded the task instruction into the
+    user turn while evaluation sent a short system prompt and a bare input, so the
+    fine-tune was asked to continue a prompt it had never seen. Training loss looked
+    perfect and every adapter scored 0.000 on the task.
+
+    A loss mask can be right while the thing being conditioned on is wrong. NB1 proves
+    the mask; this proves the prompt. Returns the two renders and whether the training
+    text starts with the evaluation text -- if it does not, the fine-tune cannot transfer
+    no matter how well it trains.
+    """
+    msgs = to_messages(record, system=system)
+    train_text = _render(tokenizer, msgs, False, enable_thinking)
+
+    ask = [m for m in msgs if m["role"] != "assistant"]
+    eval_text = _render(tokenizer, ask, True, enable_thinking)
+
+    return {
+        "train_render": train_text,
+        "eval_render": eval_text,
+        "eval_prompt_is_prefix_of_training": train_text.startswith(eval_text),
+        "supervised_tail": train_text[len(eval_text):] if train_text.startswith(eval_text) else None,
+    }

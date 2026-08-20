@@ -143,3 +143,47 @@ def test_generated_notebook_matches_its_source(src):
     assert not missing, (
         f"{nb.name} is stale — {len(missing)} source lines are not in it. "
         f"Run `make colab`. First: {missing[0][:90]!r}")
+
+
+# --- F-31: the prompt trained on must be the prompt evaluated with -------------------
+
+def test_training_prompt_is_the_evaluation_prompt():
+    """Measured on a T4: every adapter scored target=0.000 format=0.000 with a healthy
+    loss curve, because training folded the schema into the user turn while evaluation
+    sent `NAIVE_PROMPT` + a bare ticket. The model answered the question it was actually
+    asked -- vague instruction, no schema -- in fluent prose.
+
+    A mask proof does not catch this: the mask was correct throughout. What was wrong is
+    what the model was conditioned on.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "tests"))
+    from fake_tokenizer import FakeTokenizer
+
+    from labkit import data
+    from labkit.config import NAIVE_PROMPT
+
+    tok = FakeTokenizer()
+    rec = {"instruction": "Classify the ticket into JSON with 4 keys.",
+           "input": "my order VN1 is late", "output": '{"a": 1}'}
+
+    good = data.prompt_alignment(tok, rec, system=NAIVE_PROMPT)
+    assert good["eval_prompt_is_prefix_of_training"], (
+        "the text generation sends is not a prefix of what training saw — the fine-tune "
+        "is being asked to continue a prompt it never trained on")
+    assert '{"a": 1}' in good["supervised_tail"]
+
+    # The old shape must still be detectable as broken, or this gate proves nothing.
+    broken = data.prompt_alignment(tok, rec, system=None)
+    eval_text = good["eval_render"]
+    assert not broken["train_render"].startswith(eval_text), (
+        "the pre-F-31 shape should NOT align with the evaluation prompt")
+
+
+def test_prompts_have_exactly_one_definition():
+    """generate.py re-exports them; config.py owns them. Two copies is how F-31 got in."""
+    from labkit import config, generate
+    assert generate.NAIVE_PROMPT is config.NAIVE_PROMPT
+    assert generate.OPTIMIZED_PROMPT is config.OPTIMIZED_PROMPT
+    gen_src = (ROOT / "src" / "labkit" / "generate.py").read_text(encoding="utf-8")
+    assert "NAIVE_PROMPT = " not in gen_src, "generate.py must import, not redefine"

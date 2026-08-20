@@ -10,28 +10,12 @@ import gc
 import time
 
 from . import device
-from .config import Tier
+from .config import NAIVE_PROMPT, OPTIMIZED_PROMPT, Tier
 
 # The two prompts that define baselines (a) and (b). Baseline (b) has to be a genuine
 # effort — deck §17's whole point is that a fine-tune which cannot beat a *well-prompted*
 # base model is not worth shipping. Writing a deliberately weak (b) to flatter your
 # fine-tune is the main way to cheat this lab, and the rubric checks for it.
-NAIVE_PROMPT = "Phân loại ticket sau."
-
-OPTIMIZED_PROMPT = """Bạn là hệ thống phân loại ticket CSKH. Trả về DUY NHẤT một object JSON, không kèm giải thích, không kèm markdown fence.
-
-Schema bắt buộc — đúng 4 khóa:
-{"intent": ..., "urgency": ..., "product": ..., "sentiment": ...}
-
-intent    ∈ doi_tra | van_chuyen | hoan_tien | san_pham_loi | hoi_thong_tin
-urgency   ∈ cao | trung_binh | thap
-sentiment ∈ tieu_cuc | trung_tinh | tich_cuc
-product   = tên sản phẩm xuất hiện nguyên văn trong ticket
-
-Ví dụ:
-Ticket: "Shop ơi, mình đặt bàn phím cơ mã đơn DH123456. Giao hàng chậm. Đã 3 ngày rồi. Nhờ shop kiểm tra."
-JSON: {"intent": "van_chuyen", "urgency": "trung_binh", "product": "bàn phím cơ", "sentiment": "trung_tinh"}"""
-
 
 def free_memory() -> None:
     """Between runs. Deck §16: not doing this is the most common OOM in a multi-run lab."""

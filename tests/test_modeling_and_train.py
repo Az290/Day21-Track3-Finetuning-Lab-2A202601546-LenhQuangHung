@@ -316,9 +316,16 @@ def test_planned_steps_matches_the_measured_nb3_run():
     assert train.planned_steps(225, get_tier("T4"), 2.0) == 30
 
 
-def test_contrasts_get_the_same_step_budget_as_the_baseline():
+def test_contrasts_get_the_same_step_budget_as_the_baseline(monkeypatch):
     """NB4 used to hardcode max_steps=60 while NB3 ran 30 — every contrast was trained
-    twice as long as the baseline it is compared against."""
+    twice as long as the baseline it is compared against.
+
+    `EPOCHS` is pinned rather than read from the ambient environment: this test is about
+    the two notebooks AGREEING, not about any particular budget. Left ambient, a student
+    who set EPOCHS=1 to time-box the lab — the lever README advertises — would get a red
+    suite, and `make verify` gates on the suite.
+    """
+    monkeypatch.setenv("EPOCHS", "2")
     tier = get_tier("T4")
     nb3 = train.planned_steps(225, tier, 2.0)
     nb4 = train.planned_steps(225, tier, training_epochs())
