@@ -933,6 +933,52 @@ matched to 0.0000%.
 
 ---
 
+### The regression collapse is real forgetting, not prompt-shape sensitivity
+
+Worth ruling out explicitly, because it decides whether §14.3's remedy is the right
+one. Training renders a system turn (`NAIVE_PROMPT`) + a bare-ticket user turn; NB5's
+regression probe sends `system=None` + the question, a shape the fine-tune never saw.
+Base and fine-tune are measured identically so the comparison is fair either way — but
+if the drop were shape-driven, replay data would be the wrong fix.
+
+| model | `system=None` (what NB5 sends) | `system=NAIVE` (training shape) |
+|---|---|---|
+| base | 0.6444 | 0.5333 |
+| fine-tune | **0.0667** | **0.0000** |
+
+Matching the training shape makes the fine-tune *worse*, not better. It answers "what is
+the capital of Vietnam?" with `{"intent": "hoi_thong_tin", "urgency": "thap", ...}`. The
+collapse is total and unconditional, so **§14.3's 1-5% replay data is the correct
+prescription** and the alternative explanation is ruled out rather than assumed away.
+
+Caveat on the bar itself: the 0.8B base answers that same question with *"Thành phố thủ
+đô của Việt Nam là **Hàn Quốc**"* — "the capital of Vietnam is South Korea". A 0.644
+regression baseline on this tier is partial keyword credit on weak output, not a model
+worth protecting. On the 4B tier the bar should be meaningfully higher.
+
+---
+
+## NB6 verified (first run)
+
+NB6 had never been executed in any session. On the merged tree, with all four adapters
+on disk, it passes end to end:
+
+```
+trước merge: 0.9900
+sau merge:   0.9900   (Δ +0.0000)
+adapter đang nạp: ['correct', 'attn_only', 'qlora']
+```
+
+`results/merge_check.json`: `{"before_merge": 0.99, "after_merge": 0.99, "delta": 0.0,
+"tolerance": 0.01, "n": 50}`. The merge is numerically exact — `W = W₀ + (α/r)·BA` in
+bf16 costs nothing measurable here — and `set_adapter()` hot-swaps all three adapters on
+one loaded base, each still emitting well-formed JSON.
+
+`n: 50` rather than 20 is F-28: this assert used to run on 20 of 50 items even in a full
+run, so a post-merge regression confined to the tail would have gone unseen.
+
+---
+
 ## Not verified
 
 * The **T4 / fp16 path** end-to-end. The run above is Ampere (sm_86) using native bf16,
@@ -940,4 +986,3 @@ matched to 0.0000%.
   Turing hardware.
 * `unsloth/Qwen3.5-4B` end-to-end. NB2 completed on it (see above); NB3→NB5 on the 4B
   model have still not run to completion on a T4.
-* **NB6** (merge + adapter hot-swap) — optional, and not run in any session yet.
