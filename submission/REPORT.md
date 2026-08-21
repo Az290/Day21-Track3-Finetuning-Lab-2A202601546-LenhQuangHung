@@ -130,4 +130,6 @@ Diễn giải: Bản fine-tune **thắng rõ ràng** trên tác vụ chính — 
 - [ ] B2 dataset miền riêng (`data/CUSTOM_DATASET.md`)
 - [ ] B3 reasoning-trace collapse (hai `MASK_MODE`, kèm `valid_trace_rate`)
 - [ ] B4 quét rank có kiểm soát
-- [ ] B5 HuggingFace Hub — link:
+- [x] B5 HuggingFace Hub — link: https://huggingface.co/Hung371/lab21-2A202601546-qwen35-triage-vi
+  (chứa `adapters/correct/`, toàn bộ `results/`, và bản sao `submission/REPORT.md` này —
+  đẩy lên vì GitHub chặn Git LFS upload cho object mới trên fork public)
