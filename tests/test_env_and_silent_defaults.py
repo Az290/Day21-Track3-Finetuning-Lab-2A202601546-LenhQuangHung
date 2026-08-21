@@ -111,7 +111,7 @@ def test_reasoningless_corpus_warns_for_think_modes():
     closes an empty <think></think>, so `masked-think` and `response-only` are
     byte-identical to `assistant-only` there. Silent no-ops are what this lab is about."""
     from labkit import data
-    from tests.fake_tokenizer import FakeTokenizer
+    from fake_tokenizer import FakeTokenizer
 
     records = [{"instruction": "i", "input": "x", "output": '{"a": 1}'}]
     with pytest.warns(RuntimeWarning, match="no-op on this corpus"):
@@ -121,7 +121,7 @@ def test_reasoningless_corpus_warns_for_think_modes():
 
 def test_no_warning_when_the_corpus_has_traces():
     from labkit import data
-    from tests.fake_tokenizer import FakeTokenizer
+    from fake_tokenizer import FakeTokenizer
 
     records = [{"instruction": "i", "input": "x",
                 "output": '<think>vi sao</think>\n{"a": 1}'}]
@@ -134,7 +134,7 @@ def test_no_warning_when_the_corpus_has_traces():
 def test_assistant_only_never_warns():
     """The default mode is not affected by any of this."""
     from labkit import data
-    from tests.fake_tokenizer import FakeTokenizer
+    from fake_tokenizer import FakeTokenizer
 
     records = [{"instruction": "i", "input": "x", "output": '{"a": 1}'}]
     with warnings.catch_warnings():
